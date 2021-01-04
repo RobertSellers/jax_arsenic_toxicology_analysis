@@ -7,6 +7,8 @@
 ```
 ├── README.md
 ├── data_analysis_master.Rmd
+└── docs (for Github pages html hosting)
+    ├── data_analysis_master.html
 └── data
     ├── discovery_invitro
         - founders_quantal (added manually)
