@@ -1,7 +1,6 @@
 # Arsenic systems toxicology study documentation and analysis
 
 # Project structure
-- updated with bash tree inside project parent dir
 - data_analysis_master.Rmd contains project analysis blueprint
 
 ```
@@ -9,14 +8,9 @@
 ├── data_analysis_master.Rmd
 └── data
     ├── discovery_invitro
+        - founders_quantal (added manually)
+        - do_nuclei_counts (added manually)
     ├── discovery_invivo
     ├── omics
     └── validation
 ```
-
-# Data Retrieval 
-
-## In Vitro - O'Connell
-
-- Data stored on BOX
-- Data must be added manually to sync with code / RMarkdown
