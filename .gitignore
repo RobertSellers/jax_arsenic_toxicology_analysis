@@ -11,6 +11,11 @@ data/omics/.gitkeep
 data/validation/*
 data/validation/.gitkeep
 
+# ignore data for intermediate output
+output/*
+output/.gitkeep
+
+
 # History files
 .Rhistory
 .Rapp.history
