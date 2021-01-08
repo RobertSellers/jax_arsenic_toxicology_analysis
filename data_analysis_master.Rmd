@@ -1,7 +1,7 @@
 ---
 title: "Arsenic Systems Toxicology Analysis / Project Reconstruction"
 author:
-- name: Robert Sellers / Callan O'Conner / Greg Keele
+- name: Robert Sellers / Callan O'Conner
   affiliation: The Jackson Laboratory
 date: "`r paste('Last knit:',format(Sys.time(), '%d %B %Y'))`"
 abstract: |
@@ -33,6 +33,7 @@ output:
 
 - [Box Data Link (remote)](https://thejacksonlaboratory.ent.box.com/folder/87420987160)
 - [Proposal Link (local)](./papers/NIEHS_ArsenicProposal_Science.pdf)
+- [Methylarsonouse Acid Reference](https://pubchem.ncbi.nlm.nih.gov/compound/Methylarsonous-acid)
 
 ## Hypothesis 
 
@@ -57,9 +58,11 @@ In Vitro Analysis (__Aim 2__)
 In Vivo Renal (__Aim 3__)
 - TBD
 
+---
+
 # R package environment
 
-Click code to view requirements
+Click on __CODE__ button to view requirements.
 
 ```{r message=FALSE}
 library(data.tree) # project mapping chunk & file dendrogram
@@ -78,462 +81,261 @@ library(factoextra) # PCA Analysis
 library(corrplot) # PCA Analysis
 # library(gridExtra) # toggle with multi plotting / or use facet_wrap
 #library("GGally","parcoords") # parallel coordinates plotting
+source("scripts/harmony_utils.R")
+source("scripts/tidy_utils.R")
+source("scripts/var_analysis.R")
 ```
 
-# Project metadata / parameters
+---
 
-Meta variables for project organization (work in progress)
+# Analysis metadata and parameters
+
+## Harmony dataset selection
+
+Currently one master directory can be processed in the following pipeline. This data accesses _./scripts/harmony_utils.R_ for the generation of R friendly plate objects.
 
 ```{r}
-#do_cohort_sample_size <- 640
-exposure_to_labeling_duration_hours <- 24
-founders_replicates <- data.frame()
-concentration_arr <- c(0, 0.1, 0.5, 1, 2, 3, 4, 5) # in ppm
-do_nucleiCountssample_size <- 250
-arsenic_exposure_limit <- 0.01 # in ppm
-do_founders <- c("AJ", "B6", "129", "NOD", "NZO", "CAST", "PWK", "WSB")
-#image_scale <- 200000
-
-# collaborative cross / inbred
-# diversity outcross / outbred
-# collaborative cross RIX F1 CC-RIX F1
-
-# hoescht features
-# nuclei count, nuclear area, nuclear roundness, nuclear symmetry, nuclear length, hoescht intensity
-# mitotracker
-# cell area, cell roundness, cell length, cell symmetry, cell compactness, radial profile, mitotracker-homogeneity, mitotracker intensity, mitotracker intensity
-#mitochondrial texture - bright,dark,valley,saddle,edge,spot,hole
-# H2AX
-# num spots, postive/negative, texture: bright,dark,valley,saddle,edge,spot,hole
-
-#micronucleated vs multinucleated cells
+selected_dir <- "./do_unfiltered"
 ```
 
-- Founders Response: Arsenic / Sodium Arsenite (As)
-- DO Response: [Methylarsonouse Acid](https://pubchem.ncbi.nlm.nih.gov/compound/Methylarsonous-acid)
-- 3 cellular strains representing cytotoxicity, genotoxicity, and oxidative stress
-- Manually input variables based on found documentation:
-  - exposure to labeling duration (hours): `r exposure_to_labeling_duration_hours`
-  - arsenic concentrations applied: `r length(concentration_arr)` concentrations; `r concentration_arr`
-  - DO screen sample size `r length(do_nucleiCountssample_size)`
+__<span style="color:red; font-size:26px;">`r selected_dir`</span>__. was selected in this file's code.
 
+## Parameters
+
+### Proposal parameters
+
+A collection of user-defined values representing stated and proposed values found in project documentation. 
+
+```{r}
+metadata <- list(
+  exposure_to_labeling_duration_hours = 24, # time from culturing to image ready state
+founders_concentration_arr = c(0, 0.1, 0.5, 1, 2, 3, 4, 5), # in ppm
+do_concentration_arr = c(0, 0.01, 0.1, 0.75, 1, 1.25, 2, 5), # in ppm
+do_sample_size = 250, # proposed sample size
+arsenic_exposure_limit = 0.01, # in ppm / existing standard criteria
+do_founders = c("AJ", "B6", "129", "NOD", "NZO", "CAST", "PWK", "WSB"),
+stains_df = data.frame(
+  "stain" = c("mitotracker","h2ax","hoescht"),
+  "phenotype_targets" = c("cytotoxicity","genotoxicity","oxidative_stress")
+  )
+)
+
+knitr::kable(metadata$stains_df, caption="Stains applied")
+```
+
+- Manually input variables based on found documentation:
+  - exposure to labeling duration (in hours): `r metadata$exposure_to_labeling_duration_hours`
+  - arsenic concentrations applied (in ppm): `r length(metadata$concentration_arr)` concentrations; `r metadata$concentration_arr`
+  - DO screen proposed individual sample size `r length(metadata$do_sample_size)`
+
+---
 
 # Data loading & tidying
-
-## Custom scripts
-
-So far contains...
-
-- code that generates plate class objects containing
-    - given "normal" harmony software output...
-    - plate index metadata
-    - cell data.frame
-    - plate data.frame
-    - various input/header metadata variables
-- built-in exploration methods / functions (tbd)
-
-__wanted: existing code for integration / development__
-
-```{r}
-add_item_naive <- function(list_name, plate_obj_name, item){
-  len_list <- length(.GlobalEnv[[list_name]]) + 1
-  .GlobalEnv[[list_name]][[plate_obj_name]] <- item
-}
-
-# ensure all NA values are the same
-is.nan.data.frame <- function(x){
-  do.call(cbind, lapply(x, is.nan))
-}
-
-# pretty print percent
-percent <- function(x, digits = 2, format = "f", ...) {
-  paste0(formatC(100 * x, format = format, digits = digits, ...), "%")
-}
-
-# reads a file containing harmony data evaluations
-harmony_read_plate <- function(list_name, dir, e, t = "unknown", run_qa = TRUE){
-
-  plate_obj_name <- paste0(dir,"_e",as.character(e))#paste0(plate_id,"_", batch_id,"_e", e, special_qualifier)
-
-  # create a plate class to keep things organized
-  setClass(Class="plate",
-   representation(
-      evaluation = "numeric",
-      index="list",
-      plate_df="data.frame",
-      cells_df="data.frame",
-      cells_header="character",
-      plate_header="character",
-      #database = "character",
-      plate_dir = "character",
-      qa = "character"
-    ))
-  
-  # str determines where files should be if applicable
-  index_file <- file.path(dir,"indexfile.txt")
-  plate_file <- file.path(dir,paste0("Evaluation",e),"PlateResults.txt")
-  cells_file <- file.path(dir,paste0("Evaluation",e),"Objects_Population - Nuclei Selected.txt")
-
-  ###### PLATE FILE#######
-
-  if(file.exists(plate_file)){
-    
-    plate_header <- readLines(plate_file,n = 8) 
-
-    plate_df <- read_tsv(plate_file,skip=8) %>%
-      select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-      clean_names() # removes spaces and bad characters for underscores
-
-    plate_df[is.nan(plate_df)] <- NA #change NaN to NA
-    
-  }
-  ###### INDEX FILE#######
-  if(file.exists(index_file)){
-
-    idx_df <- read_tsv(index_file) %>%
-      select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-      clean_names() %>%# removes spaces and bad characters for underscores
-      mutate(channel_name = gsub("[[:punct:][:blank:]]", "_", channel_name),
-             channel_name = tolower(channel_name))
-    
-    # split dataframes based on stain value
-    idx_df_split <- split(idx_df, idx_df$channel_name)
-  }
-  ###### CELLS FILE#######
-  if(file.exists(cells_file)){
-
-    # read file header
-    cells_header <- readLines(cells_file, n = 9) 
-    #header_split <- str_split(gsub("\t", "__", cells_header, fixed=TRUE), "__")
-    #database_name <- header_split[[1]][2] # more here - also get cell file
-    # read file data
-    cell_df <- read_tsv(cells_file,skip=9) %>%
-      select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-      clean_names() # removes spaces and bad characters for underscores
-  }else{
-    cells_header <- ''
-    cell_df <- data.frame()
-  }
-  # basic data bottleneck qa
-  if(run_qa){
-
-      # validate plate column
-      if(!("plate" %in% names(plate_df))){
-        qa <- 'fail'
-      }else if (!(length(unique(plate_df$plate))==1)){
-        qa <- 'fail'
-      }else{
-        qa <- 'pass'
-      }
-      # check for missing columns
-      #print (paste0("number of columns ", length(colnames(plate_df))))
-  }
-
-  # generate new class and append to specified list by plate_obj_name
-  new_plate_class <- new("plate",
-              evaluation = e,
-              index=idx_df_split,
-              plate_df=plate_df,
-              cells_df=cell_df,
-              cells_header=cells_header,
-              plate_header=plate_header,
-              plate_dir = dir,
-              qa = qa
-          )
-  
-  add_item_naive(list_name, plate_obj_name, new_plate_class)
-}
-
-dependent_variable_analysis_dr <- function (df, ignore, response_var){
-  # attempting https://stackoverflow.com/questions/12234248/printing-multiple-ggplots-into-a-single-pdf-multiple-plots-per-page
-  # Plot separate ggplot figures in a loop.
-  set.seed(11)
-  # select dependent variables
-  df_predictor_cols <- names(df)[!(names(df) %in% ignore)]
-  
-  # Make list of variable names to loop over.
-  distribution_plot_list = list()
-  drc_plot_list = list()
-  
-  for (i in 1:length(df_predictor_cols)){
-    
-      distribution_plot = ggplot(
-        data = df, 
-        aes_string(x=response_var, y=df_predictor_cols[i])) +
-        geom_boxplot(width=0.1) +
-        #geom_point(size=3, aes(colour=sex)) + 
-        ggtitle(paste0(response_var," with\n",df_predictor_cols[i]))
-      
-      distribution_plot_list[[i]] = distribution_plot
-      drc_plot_list[[i]] = distribution_plot
-  }
-  # Make plots.
-  pdf_name <- "distributions.pdf"
-  pdf(pdf_name)
-  for (i in 1:length(df_predictor_cols)) {
-    multi_page <- ggarrange(distribution_plot_list[[i]],drc_plot_list[[i]], nrow=2, ncol=1)
-    print(multi_page)
-  }
-  dev.off()
-}
-```
 
 ## Loading as custom plate objects 
 
 __Explanation__
 
-- The following loads Founders / DO Data
-- System loads related data as lists of objects
-  - finds an indexfile.txt, PlateResults.txt, and currently Objects_Population - Nuclei Selected.txt (where applicable)
-  - parses directory name and Evaluation[n] folders as follows:
-    - TBD, still need to ad-hoc rename folders as discovered
-  - this does not yet account for modified Harmony output (TBD)
-- Founders data
-  - used to estimate heritability of dose-response parameters
-  - used to establish assay reliability prior to screening DO mice
-- DO data
-  - TBD
+- The following loads Harmony-derived data for the following input organization:
+  1. set working directory 2 parents above the folder containing each plate derived from a single analysis (i.e. setwd('data/discovery_invitro'))
+  2. Run _harmony_read_plate_2()_ on a contained directory which will return a list object containing the data.
+  
+<pre>
+├── data
+│   ├── discovery_invitro <- <b>setwd("data/discovery_invitro/") here!</b>
+│   │   ├── do_nuclei_counts <- <b>harmony_read_plate_2(dir = "./do_unfiltered")</b>
+│   │   │   ├── 20222_A1_2020-08-18T13-18-44_Measurement-2
+│   │   │   │   ├── Evaluation2
+│   │   │   │   │   ├── Objects_Population\ -\ Nuclei\ Selected.txt <b>(if applicable)</b>
+│   │   │   │   │   └── PlateResults.txt
+│   │   │   │   └── indexfile.txt
+</pre>
 
 ```{r message=FALSE, warning=FALSE, echo = FALSE}
-# point to data dir
-data_parent_dir <- "data/discovery_invitro/"
-setwd(data_parent_dir)
+# point to masterdata dir
+setwd("data/discovery_invitro/")
 
-# define global list objs
-do_plate_list <- list()
+plate_list <- harmony_read_plate_2(dir = selected_dir)
 
-# DO Data
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20222_A1_2020-08-18T13-18-44_Measurement-2", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20222_A2_2020-08-17T15-22-26_Measurement-1", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20222_B1_2020-08-25T12-23-59_Measurement-3", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20222_B2_2020-08-18T11-40-06_Measurement-3", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20223_A1_2020-08-17T17-03-14_Measurement-2", e = 3, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20223_A2_2020-08-18T14-54-58_Measurement-1", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20223_B1_2020-08-27T10-48-20_Measurement-1", e = 3, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20223_B2_2020-08-17T11-02-00_Measurement-1", e = 3, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20222_B2_2020-08-29T11-01-59_Measurement-4_rerun", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20236_A1_2020-08-28T09-53-44_Measurement-4", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20236_A2_2020-08-28T11-33-31_Measurement-2", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20236_B1_2020-08-28T13-12-27_Measurement-1", e = 3, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20236_B2_2020-08-28T14-45-19_Measurement-1", e = 4, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20244_A1_2020-09-18T11-06-17_Measurement-1", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20244_A2_2020-09-14T11-13-52_Measurement-1", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20244_B1_2020-09-14T09-49-07_Measurement-2", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20244_B2_2020-09-18T09-22-05_Measurement-1", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20255_A1_2020-09-25T16-02-20_Measurement-1", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20255_A2_2020-09-18T12-40-46_Measurement-1", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20255_B1_2020-09-19T11-13-53_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20255_B1_2020-09-25T14-41-51_Measurement-5", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20255_B2_2020-09-26T10-46-29_Measurement-1", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20255_B2_2020-09-26T13-00-37_Measurement-2", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20255_B2_2020-09-28T09-33-41_Measurement-1_last3columns", e = 2, t =  "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20264_A1_2020-09-29T11-41-03_Measurement-2", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20264_A2_2020-09-28T11-04-39_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20264_B1_2020-09-28T12-28-55_Measurement-1", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20264_B1_2020-09-28T13-26-45_Measurement-1_last3columns", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20264_B2_2020-09-28T13-55-11_Measurement-1", e = 2, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20265_A2_2020-10-01T11-37-02_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20269_A1_2020-10-11T17-09-53_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20269_A2_2020-10-11T13-28-26_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20269_B1_2020-10-11T15-13-21_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20269_B2_2020-10-11T18-33-32_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20279_A1_2020-10-14T13-18-01_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20279_B1_2020-10-14T14-43-53_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20279_B2_2020-10-14T16-08-36_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20281_A1_2020-10-15T14-03-58_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20281_B2_2020-10-15T12-28-23_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20286_A1_2020-10-19T14-04-13_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20286_A2_2020-10-19T11-10-00_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20286_B1_2020-10-19T16-25-12_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20286_B2_2020-10-19T12-38-27_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20288_A1_2020-10-26T10-43-48_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20288_B1_2020-10-26T12-27-19_Measurement-1", e = 1, t = "callan")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20267_A1_2020-10-02T10-37-07_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20267_A2_2020-10-04T15-35-00_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20267_B1_2020-10-04T12-18-54_Measurement-2", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20267_B2_2020-10-02T12-32-44_Measurement-2", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20268_A1_2020-10-09T16-31-23_Measurement-1", e = 3, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20268_A2_2020-10-10T08-27-15_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20268_B1_2020-10-10T11-59-40_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20268_B2_2020-10-10T14-39-11_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20280_A1_2020-10-13T12-02-22_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20280_A2_2020-10-12T09-20-51_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20280_B1_2020-10-13T13-52-00_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20280_B2_2020-10-13T15-16-22_Measurement-1", e = 3, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20289_A1_2020-10-20T14-00-16_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20289_A2_2020-10-20T11-00-34_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20289_B1_2020-10-20T09-34-58_Measurement-1", e = 4, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20289_B2_2020-10-20T12-24-22_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20292_A1_2020-10-22T13-01-19_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20292_A2_2020-10-22T14-52-25_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20292_B1_2020-10-22T16-17-59_Measurement-1", e = 2, t = "whitney")
-harmony_read_plate('do_plate_list',"do_nucleiCounts/20292_B2_2020-10-30T10-05-16_Measurement-1", e = 1, t = "whitney")
+# founder_quantal_plate_list <- harmony_read_plate_2(dir = "./founders_quantal")
+# do_unfiltered_plate_list <- harmony_read_plate_2(dir = "./do_unfiltered")
+# do_screen_plate_list <- harmony_read_plate_2(dir = "./do_nucleiCounts")
 ```
 
-___Example Class output of plate class inside list___
+## Generate a master plate data frame
+
+- Creates an amalgamated data.frame from _harmony_read_plate's_ returned list object's constituent plates 
 
 ```{r}
-split_header <- strsplit(do_plate_list$`do_nucleiCounts/20222_B2_2020-08-18T11-40-06_Measurement-3_e1`@plate_header, split="\t")
-do.call(rbind,split_header[c(1:6)])
+all_plates_df <- do.call(rbind.fill, lapply(plate_list, function(x) {x@plate_df})) %>%
+  mutate(concentration = factor(concentration))
 ```
 
-```{r message=FALSE, warning=FALSE, echo = FALSE, results = 'hide'}
-# point to data dir
-data_parent_dir <- "data/discovery_invitro/"
-setwd(data_parent_dir)
+# Customize data
 
-#founder_plate_list <- list()
-founder_quantal_plate_list <- list()
+- From this point forward things are not automatic
+- The pipeline is not mature and each dataset needs special consideration and relational information.
 
-# Founders Data
-#harmony_read_plate('founder_plate_list',"founders_data/Founders/Founders_A1_Whole_New__2020-01-15T13_25_19-Measurement_1", e = 6)
-#harmony_read_plate('founder_plate_list',"founders_data/Founders/Founders_AA1__2020-01-13T14_27_40-Measurement_1", e = 8)
-#harmony_read_plate('founder_plate_list',"founders_data/Founders/Founders_B1_Whole__2020-01-03T10_34_56-Measurement_1", e = 7)
-#harmony_read_plate('founder_plate_list',"founders_data/Founders/Founders_BB1__2020-01-14T09_14_08-Measurement_1", e = 7)
-#harmony_read_plate('founder_plate_list',"founders_data/Founders/Founders_C1_Whole__2019-12-30T10_37_26-Measurement_1", e = 7)
-#harmony_read_plate('founder_plate_list',"founders_data/Founders/Founders_CC1__2020-01-15T09_21_08-Measurement_1", e = 7)
-#harmony_read_plate('founder_plate_list',"founders_data/Founders/Founders_D1_Whole__2019-12-30T13_52_41-Measurement_1", e = 6)
-#harmony_read_plate('founder_plate_list',"founders_data/Founders/Founders_DD1__2020-01-14T13_08_38-Measurement_1", e = 7)
-#harmony_read_plate('founder_plate_list',"founders_data/Founders/Founders_E1_Whole__2020-01-02T08_52_12-Measurement_1", e = 8)
+## Loading supplementary data
 
-# Founders Quantal Datafounder_quantal_list
-harmony_read_plate('founder_quantal_plate_list',"founders_quantal/Founders_A1_Whole_New__2020-01-15T13_25_19-Measurement_1", e = 1)
-harmony_read_plate('founder_quantal_plate_list',"founders_quantal/Founders_AA1__2020-01-13T14_27_40-Measurement_1", e = 3)
-# explanation for PWK_2F removal
-harmony_read_plate('founder_quantal_plate_list',"founders_quantal/Founders_B1_Whole__2020-01-03T10_34_56-Measurement_1", e = 3)
-harmony_read_plate('founder_quantal_plate_list',"founders_quantal/Founders_BB1__2020-01-14T09_14_08-Measurement_1", e = 3)
-harmony_read_plate('founder_quantal_plate_list',"founders_quantal/Founders_C1_Whole__2019-12-30T10_37_26-Measurement_1", e = 2)
-harmony_read_plate('founder_quantal_plate_list',"founders_quantal/Founders_CC1__2020-01-15T09_21_08-Measurement_1", e = 3)
-harmony_read_plate('founder_quantal_plate_list',"founders_quantal/Founders_D1_Whole__2019-12-30T13_52_41-Measurement_1", e = 2)
-harmony_read_plate('founder_quantal_plate_list',"founders_quantal/Founders_DD1__2020-01-14T13_08_38-Measurement_1", e = 3)
-harmony_read_plate('founder_quantal_plate_list',"founders_quantal/Founders_E1_Whole__2020-01-02T08_52_12-Measurement_1", e = 4)
+- Supplementary tables are contained inside __./lookups__. 
+
+```{r message=FALSE, warning=FALSE}
+doscreen_sample_lookup <- readr::read_csv("lookups/do_unfiltered/sample_lookup.csv") %>% 
+  clean_names()
+
+not_any_na <- function(x) all(!is.na(x))
+
+all_plates_df_join <- readr::read_csv("lookups/do_unfiltered/growth_lookup.csv") %>% 
+  clean_names() %>% 
+  tidyr::drop_na(individual) %>% 
+  dplyr::select(where(not_any_na)) 
+
+# split pipeline for qa
+all_plates_df_join <- all_plates_df_join %>%
+  left_join(doscreen_sample_lookup, by = c("individual" = "sample_1")) %>%
+  right_join(all_plates_df, by = c("individual")) %>%
+  mutate(viable_per = as.numeric(gsub(",","",viable_per)))
+
+stain_series_lookup <- readr::read_csv("lookups/stain_info/do_all_plates_df_stainlookup.csv")
 ```
 
-## Base data modification
+## Modification
 
-- Determine improved class naming structure with full path and ticks because this is big and ugly
-- Currently removing spaces in directory manually
-- Asserting plate names (i.e. A1, B1, etc) in new column _plate_name_ as seen in found code
-- Added F to sex in gender for plate D1
-- PWK_2F strain removed from B1
+- Code block for unique data modification, error checking and custom considerations.
+
+### Feature engineering
 
 ```{r}
-founder_quantal_plate_list$`founders_quantal/Founders_A1_Whole_New__2020-01-15T13_25_19-Measurement_1_e1`@plate_df <-
-founder_quantal_plate_list$`founders_quantal/Founders_A1_Whole_New__2020-01-15T13_25_19-Measurement_1_e1`@plate_df %>%
-  filter(!is.na(cell_type)) %>% 
-  mutate(plate_name = 'A1')
-
-founder_quantal_plate_list$`founders_quantal/Founders_B1_Whole__2020-01-03T10_34_56-Measurement_1_e3`@plate_df <- founder_quantal_plate_list$`founders_quantal/Founders_B1_Whole__2020-01-03T10_34_56-Measurement_1_e3`@plate_df %>%
-  filter(mouse != "PWK_2F") %>% mutate(plate_name = 'B1')
-
-founder_quantal_plate_list$`founders_quantal/Founders_AA1__2020-01-13T14_27_40-Measurement_1_e3`@plate_df<-founder_quantal_plate_list$`founders_quantal/Founders_AA1__2020-01-13T14_27_40-Measurement_1_e3`@plate_df %>% mutate(plate_name = 'AA1')
-
-founder_quantal_plate_list$`founders_quantal/Founders_BB1__2020-01-14T09_14_08-Measurement_1_e3`@plate_df<-founder_quantal_plate_list$`founders_quantal/Founders_BB1__2020-01-14T09_14_08-Measurement_1_e3`@plate_df %>% mutate(plate_name = 'BB1')
-founder_quantal_plate_list$`founders_quantal/Founders_C1_Whole__2019-12-30T10_37_26-Measurement_1_e2`@plate_df<-founder_quantal_plate_list$`founders_quantal/Founders_C1_Whole__2019-12-30T10_37_26-Measurement_1_e2`@plate_df %>% mutate(plate_name = 'C1')
-founder_quantal_plate_list$`founders_quantal/Founders_CC1__2020-01-15T09_21_08-Measurement_1_e3`@plate_df<-founder_quantal_plate_list$`founders_quantal/Founders_CC1__2020-01-15T09_21_08-Measurement_1_e3`@plate_df %>% mutate(plate_name = 'CC1')
-founder_quantal_plate_list$`founders_quantal/Founders_D1_Whole__2019-12-30T13_52_41-Measurement_1_e2`@plate_df<-founder_quantal_plate_list$`founders_quantal/Founders_D1_Whole__2019-12-30T13_52_41-Measurement_1_e2`@plate_df %>% mutate(plate_name = 'D1') %>% 
-  mutate(sex = "F")
-founder_quantal_plate_list$`founders_quantal/Founders_DD1__2020-01-14T13_08_38-Measurement_1_e3`@plate_df<-founder_quantal_plate_list$`founders_quantal/Founders_DD1__2020-01-14T13_08_38-Measurement_1_e3`@plate_df %>% mutate(plate_name = 'DD1')
-founder_quantal_plate_list$`founders_quantal/Founders_E1_Whole__2020-01-02T08_52_12-Measurement_1_e4`@plate_df<-founder_quantal_plate_list$`founders_quantal/Founders_E1_Whole__2020-01-02T08_52_12-Measurement_1_e4`@plate_df %>% mutate(plate_name = 'E1')
+#addinggrowthquantiles
+# all_plates_df_join<- all_plates_df_join %>% 
+#   mutate(GrowthQuantile = ifelse(
+#     viable_per %in% (0:250000), "slow",
+#     ifelse(viable_per %in% (250000:500000), "med_slow",
+#     ifelse(viable_per %in% 500000:1000000, "med_high",
+#     ifelse(viable_per %in% 1000000:10000000, "high", "NONE")))
+#     ))
 ```
 
-## Objects as comprehensive sample dataframes
-
-### In vitro Founders master dataset
-
-- Creates a data.frame from _founder_quantal_plate_list_
-- Loads from ./data/discovery_invitro/founders_quantal
+### Error proofing
 
 ```{r}
-founders_quantal_all_plates_df <- do.call(rbind.fill, lapply(founder_quantal_plate_list, function(x) {x@plate_df})) %>%
-  # remove columns all zeros
-  mutate(concentration = factor(concentration)) %>%
-  mutate(cell_type = factor(cell_type)) %>%
-  dplyr::rename(strain = cell_type) %>%
-  #dplyr::rename(batch = individual) %>%
-  filter(sex!='FALSE') %>%
-  mutate(strain = factor(strain, levels = c("AJ", "B6", "129", "NOD", "NZO", "CAST", "PWK", "WSB")),
-         sex = factor(sex)) %>%
-  select_if(function(x) !(all(is.na(x)) | all(x=="") | all(x==0))) %>% # remove empty colunns
-  select_if(function(x) length(unique(x)) > 1) %>% # remove rows with identical values
-  filter(concentration %in% concentration_arr | concentration != 'NA') # remove missing concentrations
+# remove 0.5 concentrations in DO
+all_plates_df_join<-all_plates_df_join[!(all_plates_df_join$concentration==0.5),]
+
+# missing values?
+#sum(is.na(all_plates_df_join$sex))
+#setdiff(all_plates_df$individual,doscreen_sample_lookup$sample_1)
 ```
 
-### Founders data scheme 
+---
 
-The following table shows counts for each individual's strain and sex along with the sample plate location.
+# Schema definition
+
+The following table shows counts for each individual's strain and sex along with the sample plate location. This will include some of the following - sex, plate, concentration, and strain (founders only).
+
+__`r length(unique(all_plates_df_join$individual))`__ individual DO mice for __`r length(all_plates_df_join$individual)`__ total wells. 2 technical replicates per individual per plate. Biological replicates on alternative A or B plates.
+
+- sample data is joined from external csv sample_lookup.csv and growth_lookup.csv
+- plate identification is not a plate - this is 'run'. 
 
 ```{r}
-founder_schema <- founders_quantal_all_plates_df %>% 
-  dplyr::count(plate_name, sex, strain, concentration) %>% 
+schema_construction <- all_plates_df_join %>%
+  dplyr::count(plate, sex, concentration) %>% # may be plate_id
   tidyr::spread(concentration, n, fill = 0) %>%
-  arrange(strain)
-DT::datatable(founder_schema)
+  arrange(plate) %>%
+  mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
+
+DT::datatable(schema_construction, rownames=FALSE, caption="Concentration frequencies by sex and experiment (plate)")
 ```
-
-### Founders technical replicate qa
-
-- tbd?
 
 ```{r}
-# library(car)
-# res <- leveneTest(in_focus_number_of_objects ~ interaction(mouse,sex,concentration,plate_name), data=founders_quantal_all_plates_df)
-#res$p.value < 0.05
+schema_construction_wells <- all_plates_df_join %>%
+  dplyr::count(plate, run, concentration) %>% # may be plate_id
+  tidyr::spread(concentration, n, fill = 0) %>%
+  arrange(plate) %>%
+  mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
+
+DT::datatable(schema_construction_wells, rownames=FALSE, caption="Concentration frequencies by 'run' (plate)")
 ```
 
-### In vitro Diversity Outbred (DO) master dataset
-
-- Creates a data.frame from _do_plate_list_
-- Loads from ./data/discovery_invitro/do_nucleiCounts
+### QA Technical Replicates
 
 ```{r}
-#cluster <- multidplyr::new_cluster(10)
+a1_individuals<-all_plates_df_join[ which(all_plates_df_join$plate=='A1'), ]$individual
+a2_individuals<-all_plates_df_join[ which(all_plates_df_join$plate=='A2'), ]$individual
+b1_individuals<-all_plates_df_join[ which(all_plates_df_join$plate=='B1'), ]$individual
+b2_individuals<-all_plates_df_join[ which(all_plates_df_join$plate=='B2'), ]$individual
 
-conditionally_remove_from_list <- sapply(do_plate_list, function(x) class(x)=="plate" && x@qa == 'pass')
+prop_diff_A1A2 <- setdiff(a1_individuals,a2_individuals)
+prop_same_A1A2 <- intersect(a1_individuals,a2_individuals)
+prop_diff_B1B2 <- setdiff(b1_individuals,b2_individuals)
+prop_same_B1B2 <- intersect(b1_individuals,b2_individuals)
 
-do_all_plates_df <- do.call(rbind.fill, lapply(do_plate_list[conditionally_remove_from_list], function(x) {x@plate_df})) %>%
-  mutate(concentration = factor(concentration))
 
-do_all_cells_df <- do.call(rbind.fill, lapply(do_plate_list, function(x) {x@cells_df})) %>%
-  mutate(concentration = factor(concentration))
+a1_total<-length(unique(a1_individuals))
+a2_total<-length(unique(a2_individuals))
+b1_total<-length(unique(b1_individuals))
+b2_total<-length(unique(b2_individuals))
+
+schema_vis <- all_plates_df_join %>%
+  dplyr::count(plate, concentration) %>% # may be plate_id
+  tidyr::spread(concentration, n, fill = 0) %>%
+  #arrange(plate) %>%
+  mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
+
+series <- c("A1","A2","B1","B2")
+## Check if each subset mentions each symptom or not
+concentration_mat <-purrr::map_dfc( series,str_detect,as.character(metadata$do_concentration_arr)) %>%
+    data.frame() %>%
+    t() %>% # transpose the result, ugh
+    as_tibble()
+
+colnames(concentration_mat)  <- metadata$do_concentration_arr
+concentration_mat$count <- schema_vis$cumsum[1:4]
+
+concentration_mat %>% print(n = nrow(concentration_mat))
+
 ```
 
-# Data Analysis
+Proportion of A replicates `r length(prop_diff_A1A2)` different vs `r length(prop_same_A1A2)` same.
+Proportion of B replicates `r length(prop_diff_B1B2)` different vs `r length(prop_same_B1B2)` same.
+---
+
+# Predictive Analysis
 
 - the following are found and new experimental analyses
 
-## Data Reduction and Variance Analysis
+## Data Reduction and Variance
 
-- Needs existing work! 
 - Analysis of _sources of external variation that can influence image analysis and quantification_
 - _We observed batch effects and additional sources of variation_ (how?)
   - in sex, litter, freeze/thaw success, replicate number within a well, and differences in cellular labeling.
   - The data was adjusted to correct for these factors prior to dose-response modeling
   - check slide 29 (well-to-well, plate-to-plate, day-to-day)
   
-```{r}
-#https://rpubs.com/JanpuHou/278584
+__3 primary predictors selected__
+- needs justification from somewhere
 
-test_founders_quantal_corr <- founders_quantal_all_plates_df[, !names(founders_quantal_all_plates_df) %in% c('row','column','number_of_analyzed_fields','concentration','strain','individual','mouse','sex','plane','timepoint','plate_name')] 
-test_omit <- na.omit(test_founders_quantal_corr)%>% select_if(colSums(.) != 0)
-#cor(tidyr::drop_na(test_founders_quantal_corr))
+ hoescht features
+ nuclei count, nuclear area, nuclear roundness, nuclear symmetry, nuclear length, hoescht intensity
 
-# Results for Variables
-pca_prcomp <- prcomp(test_omit, scale = TRUE) # note the use of na.omit. If you're data still have missing values at this point (which it shouldn't), this should eliminate them.
-# Biplot Graphic for individual units (potentially messy)
-fviz_pca_ind(pca_prcomp,
-             col.ind = "cos2", # Color by the quality of representation
-             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
-             repel = TRUE     # Avoid text overlapping
-             )
+ mitotracker
+ cell area, cell roundness, cell length, cell symmetry, cell compactness, radial profile, mitotracker-homogeneity, mitotracker intensity, mitotracker intensity
+#mitochondrial texture - bright,dark,valley,saddle,edge,spot,hole
 
-fviz_pca_var(pca_prcomp, col.var = "cos2",
-             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
-             repel = TRUE # Avoid text overlapping
-             )
-res.var <- get_pca_var(pca_prcomp)
-eig.val <- get_eigenvalue(pca_prcomp)
-```
+ H2AX
+ num spots, postive/negative, texture: bright,dark,valley,saddle,edge,spot,hole
+
+micronucleated vs multinucleated cells
+
+1. number of objects
+2. mean mitotracker intensity
+3. h2ax positive
+
+1. cytotoxicity; mitotracker; micronucleated_cells ; founders_quantal_all_plates_df$micronucleated_cells_cells
+2. genotoxicity; H2AX; H2AX_pos/in_focus ; founders_quantal_all_plates_df$h2ax_pos_in_focus
+3. mito_stress/in_focus; Hoescht; founders_quantal_all_plates_df$mito_stress_in_focus
 
 ## Dose-response & benchmark dose estimation
 
@@ -553,7 +355,6 @@ eig.val <- get_eigenvalue(pca_prcomp)
 
 $$c+(d-c)exp(-exp(b(log(x)-log(e))))$$
 
-
 - __x__ = dose
 - __a__ = count(0 dose)
 - __b__ = slope
@@ -567,8 +368,9 @@ $$c+(d-c)exp(-exp(b(log(x)-log(e))))$$
 -uses quantal dataset
 - Example founders' aggregate DR between concentration and in_focus_number_of_objects
 - https://rpubs.com/russH/378543 
+- chunk turned off
 
-```{r warning=FALSE}
+```{r warning=FALSE, eval=FALSE}
 
 # founders code reproduction
 
@@ -608,8 +410,9 @@ model_stress_LL_4 <- drm(mito_stress_in_focus ~ as.numeric(concentration),
 ### DRC distribution example - DO
 
 - 0.5 concentration ignored
+- chunk turned off
 
-```{r}
+```{r eval=FALSE}
 ## Fitting a four-parameter log-logistic model
 ## with user-defined parameter names
 #names_group <- c('plate_id' ,'technician')
@@ -641,7 +444,7 @@ summary(log_nuclei_number_of_objects_LL4)
 
 ### DRC boxplot example - DO
 
-```{r warning = FALSE}
+```{r message=FALSE, warning=FALSE, eval=FALSE}
 p <- ggplot(
     data = do_all_plates_df, aes(x = concentration, y = nuclei_number_of_objects)
   ) +
@@ -679,28 +482,6 @@ dependent_variable_analysis_dr(founders_quantal_all_plates_df,ignore, response_v
 ## GxE mapping strategy
 
 - map and identify genetic loci that are responsible for individual variation in susceptibility in DO mice using a novel G x E mapping strategy
-
-
-```{r}
-cluster <- multidplyr::new_cluster(10)
-H2AX_par_dat <- founders_quantal_all_plates_df %>%
-  ## Important covariates
-  dplyr::select(strain, sex, mouse, individual) %>%
-  ## Weibull parameters
-  left_join(data.frame(mouse = names(coef(model_H2AX_W2_4)),
-                       weibull_coefficients = coef(model_H2AX_W2_4)) %>%
-              mutate(raw = mouse,
-                     mouse = substr(raw, 8, 14),
-                     Parameter = substr(raw, 1, 1)) %>%
-              dplyr::select(-raw)) %>%
-  ## LL parameters
-  left_join(data.frame(mouse = names(coef(model_stress_LL_4)),
-                       ll_coefficients = coef(model_stress_LL_4)) %>%
-              mutate(raw = mouse,
-                     mouse = substr(raw, 8, 14),
-                     Parameter = substr(raw, 1, 1)) %>%
-              dplyr::select(-raw))
-```
 
 # Future work
 
