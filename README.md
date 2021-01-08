@@ -2,17 +2,20 @@
 
 # Project structure
 - data_analysis_master.Rmd contains project analysis blueprint
-- data_analysis_master.html is rendered at 
+- rmd organization in progress
 
 ```
-├── README.md
+├── readme.md
 ├── data_analysis_master.Rmd
-└── docs (for Github pages html hosting possibly)
-    ├── nothing for public consumption so far
-└── data
+├── data_analysis_master.html (intended boilerplate .rmd)
+└── backups (for local use.  is ignored)
+└── figures (image file collection)
+└── lookups (files with lookup values for joining)
+└── markdown_saved (knit rmd examples)
+└── papers
+└── scripts (contains project scripts / functions)
+└── data (.gitignored harmony output directories)
     ├── discovery_invitro
-        - founders_quantal (added manually)
-        - do_nucleiCounts (added manually)
     ├── discovery_invivo
     ├── omics
     └── validation
