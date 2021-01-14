@@ -1,5 +1,9 @@
 harmony_read_plate_2 <- function(dir){
 
+  if (!dir.exists(dir)){
+    stop("directory parameter not found")
+  }
+  
   # comprehensive plate list
   temp_list <- list()
   
@@ -10,7 +14,7 @@ harmony_read_plate_2 <- function(dir){
       plate_df="data.frame",
       cells_df="data.frame",
       cells_header="character",
-      metadata="data.frame",
+      plate_metadata="data.frame",
       plate_dir = "character"
     ))
   
@@ -47,6 +51,7 @@ harmony_read_plate_2 <- function(dir){
       idx_df_split <- split(idx_df, idx_df$channel_name)
     }else{
       #nothing right now
+      stop('Index data not loaded')
     }
     
     # ###### PLATE FILE#######
@@ -61,10 +66,12 @@ harmony_read_plate_2 <- function(dir){
 
       plate_df <- read_tsv(plate_file,skip=8) %>%
         select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-        clean_names() # removes spaces and bad characters for underscores
-
+        clean_names() %>%# removes spaces and bad characters for underscores
+        mutate(dir = plate_obj_name)
       plate_df[is.nan(plate_df)] <- NA #change NaN to NA
 
+    }else{
+      stop('Plate data not loaded')
     }
     
     # ###### CELLS FILE#######
@@ -76,8 +83,10 @@ harmony_read_plate_2 <- function(dir){
       # read file data
       cell_df <- read_tsv(cells_file,skip=9) %>%
         select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-        clean_names() # removes spaces and bad characters for underscores
+        clean_names() %>%# removes spaces and bad characters for underscores
+        mutate(plate_obj_name = plate_obj_name)
     }else{
+      warning('Cells data not loaded')
       cells_header <- ''
       cell_df <- data.frame()
     }
@@ -88,7 +97,7 @@ harmony_read_plate_2 <- function(dir){
                 plate_df=plate_df,
                 cells_df=cell_df,
                 cells_header=cells_header,
-                metadata=metadata_df,
+                plate_metadata=metadata_df,
                 plate_dir = dir
             )
     
