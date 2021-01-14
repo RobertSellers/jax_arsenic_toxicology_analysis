@@ -235,7 +235,7 @@ plate_collection_list <- harmony_read_plate_2(dir = "./do_focus")
 
 ```{r}
 all_plates_df <- do.call(rbind.fill, lapply(plate_collection_list, function(x) {x@plate_df})) %>%
-  tidyr::replace_na(list(concentration = 999)) %>%
+  tidyr::replace_na(list(concentration = 999)) %>% # change NA to 999 for ease of qa
   mutate(concentration = factor(concentration))
 
 #any(is.na(all_plates_df$concentration))
@@ -334,7 +334,7 @@ DT::datatable(schema_construction, rownames=FALSE, caption="Concentration freque
 
 - __Total wells__ `r nrow(all_plates_df_join)`
 
-- __Missing concentration__ `r percent(1- mean(complete.cases(all_plates_df_join$concentration)))`
+- __Missing concentration__ `r percent(nrow(all_plates_df_join[all_plates_df_join$concentration == 999, ])/nrow(all_plates_df))`
 
 - __Missing plate__ `r percent(1- mean(complete.cases(all_plates_df_join$run)))`
 
