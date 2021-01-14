@@ -3,7 +3,7 @@ title: "Arsenic Systems Toxicology Analysis / Project Reconstruction"
 author:
 - name: Robert Sellers / Callan O'Conner
   affiliation: The Jackson Laboratory
-date: "`r paste('Last knit:',format(Sys.time(), '%d %B %Y'))`"
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
 abstract: |
 latex_engine: pdflatex
 output:
@@ -41,13 +41,13 @@ _Genetic analysis in the context of a quantitative environmental perturbation wi
 
 ## Project Aims
 
-Study design evaluation / statistical methods development (__Aim 1__)
+(__Aim 1__) Study design evaluation / statistical methods development
 - Sample size determination, GxE (qtl?) mapping, hypothesis formulation
 - Dose-response and benchmark dose development / analysis
 - Omics data pathways analysis (TBD)
 - Subsequent animal / cell-line validation (TBD)
 
-In Vitro Analysis (__Aim 2__)
+ (__Aim 2__) In Vitro Analysis
 - Arsenic exposure in primary cell cultures
 - Accumulate physiologically informative cellular features / phenotypes in 3 main categories: 
   - cytotoxicity
@@ -55,7 +55,7 @@ In Vitro Analysis (__Aim 2__)
   - oxidative stress
 - Identify genetic factors of susceptibility and resistance (i.e. whole organism response and/or discovered molecular pathways)
 
-In Vivo Renal (__Aim 3__)
+(__Aim 3__) In Vivo Renal
 - TBD
 
 ---
@@ -65,18 +65,18 @@ In Vivo Renal (__Aim 3__)
 Click on __CODE__ button to view requirements.
 
 ```{r message=FALSE}
-library(data.tree) # project mapping chunk & file dendrogram
-library(DiagrammeR) # project mapping chunk
+#library(data.tree) # project mapping chunk & file dendrogram
+#library(DiagrammeR) # project mapping chunk
 library(readr)
 library(dplyr, warn.conflicts = FALSE)
 library(plyr) # for rbind.fill function
 library(stringr)
 library(drc) # dose response library
-library(ggpubr)
-library(ggplot2) # for predictor distribution plotting / analysis
+library(ggplot2) # plots
+library(ggpubr) # ggplot extension
 library(janitor) # for clean_names() bulk column renaming
-library(rstan)
-library(multidplyr) # multi-core dplyr
+#library(rstan)
+#library(multidplyr) # multi-core dplyr
 library(factoextra) # PCA Analysis
 library(corrplot) # PCA Analysis
 # library(gridExtra) # toggle with multi plotting / or use facet_wrap
@@ -90,43 +90,104 @@ source("scripts/var_analysis.R")
 
 # Analysis metadata and parameters
 
-## Harmony dataset selection
+## Aim 2: In Vitro Imagery Analysis
 
-Currently one master directory can be processed in the following pipeline. This data accesses _./scripts/harmony_utils.R_ for the generation of R friendly plate objects.
+### Outstanding issues
+
+1. OMERO data analysis may be presented in lieu of or complementary to Harmony and is not currently handled.
+2. 3 explanatory categories are represented via 3 applied stains. A data-driven justification is not currently available.
+3. Founders mice were studied alongside DO mice for the In Vitro portion of data development
+
+### Imagery dataset selection
+
+Currently one master, Harmony-derived directory can be processed in the following pipeline. This data accesses functions located inside _./scripts/harmony_utils.R_ for the generation of R friendly plate objects. A current list of datasets produced include:
+
+__Founders__ (does not include found stray measurement folders)
+
+__BOX dir FoundersData__
+
+- founders_quantal (evaluating)
+- 2Texture
+- Foounders
+- Founders analysis 052220
+- Founders Low Dose > Median
+- Founders Low Dose > Mean
+- Founders_completed
+- Founders2
+- Homogeneity
+- px2texture
+- Texture
+- Whole
+
+__BOX dir DO_Screen__
+
+- do_nucleiCounts (evaluated - defunct)
+- do_unfiltered (evaluating)
+- do_focus (evaluating)
 
 ```{r}
-selected_dir <- "./do_unfiltered"
+selected_dir <- "./do_focus"
+#selected_dir <- "./founders_quantal"
+#selected_dir <- "./do_unfiltered"
 ```
 
-__<span style="color:red; font-size:26px;">`r selected_dir`</span>__. was selected in this file's code.
+__<span style="color:red; font-size:26px;">`r paste("-> ",sub('./', '', selected_dir))`</span>__ was selected in this file's code.
 
-## Parameters
+# Experimental Parameters
 
-### Proposal parameters
+## Aim 2: In Vitro Imagery Analysis
 
-A collection of user-defined values representing stated and proposed values found in project documentation. 
+### Series Metadata (Founders vs DO)
+
+```{r}
+# Founders data metadata
+founders_metadata <- list(
+  concentration_arr = c(0, 0.1, 0.5, 1, 2, 3, 4, 5),# in ppm
+  swaps = NULL, # to be added later
+  MvF = c(2,2),
+  replicates = 4,
+  strains = 8
+)
+
+# DO data metadata
+do_metadata <- list(
+  concentration_arr = c(0, 0.01, 0.1, 0.75, 1, 1.25, 2, 5), # in ppm
+  sample_size = 250 # proposed sample size
+)
+```
+
+### Global metadata
 
 ```{r}
 metadata <- list(
-  exposure_to_labeling_duration_hours = 24, # time from culturing to image ready state
-founders_concentration_arr = c(0, 0.1, 0.5, 1, 2, 3, 4, 5), # in ppm
-do_concentration_arr = c(0, 0.01, 0.1, 0.75, 1, 1.25, 2, 5), # in ppm
-do_sample_size = 250, # proposed sample size
-arsenic_exposure_limit = 0.01, # in ppm / existing standard criteria
-do_founders = c("AJ", "B6", "129", "NOD", "NZO", "CAST", "PWK", "WSB"),
-stains_df = data.frame(
+  exposure_to_labeling_duration_hours = 24, #time from culturing to image ready state
+  stains_df = data.frame(
   "stain" = c("mitotracker","h2ax","hoescht"),
   "phenotype_targets" = c("cytotoxicity","genotoxicity","oxidative_stress")
-  )
+  ),
+  founders_metadata = founders_metadata,
+  do_metadata = do_metadata
 )
-
+rm(founders_metadata); rm(do_metadata)
 knitr::kable(metadata$stains_df, caption="Stains applied")
 ```
 
-- Manually input variables based on found documentation:
+__Global Sample Parameters__  
+  
   - exposure to labeling duration (in hours): `r metadata$exposure_to_labeling_duration_hours`
-  - arsenic concentrations applied (in ppm): `r length(metadata$concentration_arr)` concentrations; `r metadata$concentration_arr`
-  - DO screen proposed individual sample size `r length(metadata$do_sample_size)`
+
+__Founders Sample Summary__
+
+  - arsenic concentrations applied (in ppm): `r length(metadata$founders_metadata$concentration_arr)` concentrations; `r metadata$founders_metadata$concentration_arr`
+  - The sample configuration involved 2 males and 2 females from each of the 8 DO founder strains. Four individuals from each strain with three replicate wells per plate were exposed to sodium arsenite at each of the aforementioned concentrations.
+  
+__DO Sample Summary__
+
+  - arsenic concentrations applied (in ppm): `r length(metadata$do_metadata$concentration_arr)` concentrations; `r metadata$do_metadata$concentration_arr`
+  - DO screen proposed individual sample size `r length(metadata$do_metadata$sample_size)`
+
+
+## Aim 3: In Vivo Renal
 
 ---
 
@@ -155,25 +216,39 @@ __Explanation__
 # point to masterdata dir
 setwd("data/discovery_invitro/")
 
-plate_list <- harmony_read_plate_2(dir = selected_dir)
+plate_collection_list <- harmony_read_plate_2(dir = "./do_focus")
 
 # founder_quantal_plate_list <- harmony_read_plate_2(dir = "./founders_quantal")
 # do_unfiltered_plate_list <- harmony_read_plate_2(dir = "./do_unfiltered")
 # do_screen_plate_list <- harmony_read_plate_2(dir = "./do_nucleiCounts")
 ```
 
+### Outstanding harmony loading issues
+
+- Index file correctly identifies available stains as ___channel_name___, however no data is available for mapping unique features to columns inside the plate and cell datasets. This data is ad-hoc requested and manually joined per lookup tables (see do_all_plates_df_stainlookup.csv as an example).
+- Harmony output currently in an unwieldy state and being loaded agnostically as "plates"
+- Index file contains URLs to imagery and is potentially available for additional image analysis.
+
 ## Generate a master plate data frame
 
-- Creates an amalgamated data.frame from _harmony_read_plate's_ returned list object's constituent plates 
+- Creates an amalgamated data.frame from _harmony_read_plate's_ returned list object's constituent plate data and metadata.
 
 ```{r}
-all_plates_df <- do.call(rbind.fill, lapply(plate_list, function(x) {x@plate_df})) %>%
+all_plates_df <- do.call(rbind.fill, lapply(plate_collection_list, function(x) {x@plate_df})) %>%
+  tidyr::replace_na(list(concentration = 999)) %>%
   mutate(concentration = factor(concentration))
+
+#any(is.na(all_plates_df$concentration))
+#which(all_plates_df$concentration==999)
+#all_plates_df[all_plates_df$concentration==999, ]  
+#write.csv(all_plates_df[all_plates_df$concentration == 999, ], "~/Desktop/temp/missing_do.csv")  
+# contains appended headers from each PlateResults.txt
+plate_metadata_df <- do.call(rbind.fill, lapply(plate_collection_list, function(x) {x@plate_metadata}))
 ```
 
 # Customize data
 
-- From this point forward things are not automatic
+- From this point forward things are not very automatic
 - The pipeline is not mature and each dataset needs special consideration and relational information.
 
 ## Loading supplementary data
@@ -182,20 +257,24 @@ all_plates_df <- do.call(rbind.fill, lapply(plate_list, function(x) {x@plate_df}
 
 ```{r message=FALSE, warning=FALSE}
 doscreen_sample_lookup <- readr::read_csv("lookups/do_unfiltered/sample_lookup.csv") %>% 
-  clean_names()
+  clean_names() %>%
+  rowwise() %>% 
+  tibble::add_column(individual = NA, .after = 0) %>%
+  mutate(sample_count = 3 - sum(is.na(c(sample_1, sample_2, sample_3)))) %>%
+  filter(sample_count > 0) %>% 
+  mutate(sample_1 = as.character(sample_1)) %>% 
+  mutate(sample_2 = as.character(sample_2)) %>% 
+  mutate(sample_3 = as.character(sample_3)) 
+
+# duplicate individuals found!
+doscreen_sample_pivot <- tidyr::pivot_longer(doscreen_sample_lookup[,c("climb_id","sex","sample_1","sample_2","sample_3")], cols=c(sample_1, sample_2, sample_3), names_to = "sample_num", values_to = "individual") %>%
+  tidyr::drop_na(individual) %>% 
+  distinct(individual, .keep_all = TRUE) # removing duplicate error in lookup csv
+
+all_plates_df_join <- all_plates_df %>%
+  left_join(doscreen_sample_pivot, by = "individual") 
 
 not_any_na <- function(x) all(!is.na(x))
-
-all_plates_df_join <- readr::read_csv("lookups/do_unfiltered/growth_lookup.csv") %>% 
-  clean_names() %>% 
-  tidyr::drop_na(individual) %>% 
-  dplyr::select(where(not_any_na)) 
-
-# split pipeline for qa
-all_plates_df_join <- all_plates_df_join %>%
-  left_join(doscreen_sample_lookup, by = c("individual" = "sample_1")) %>%
-  right_join(all_plates_df, by = c("individual")) %>%
-  mutate(viable_per = as.numeric(gsub(",","",viable_per)))
 
 stain_series_lookup <- readr::read_csv("lookups/stain_info/do_all_plates_df_stainlookup.csv")
 ```
@@ -230,14 +309,14 @@ all_plates_df_join<-all_plates_df_join[!(all_plates_df_join$concentration==0.5),
 
 ---
 
-# Schema definition
+# Schema representation
 
 The following table shows counts for each individual's strain and sex along with the sample plate location. This will include some of the following - sex, plate, concentration, and strain (founders only).
 
-__`r length(unique(all_plates_df_join$individual))`__ individual DO mice for __`r length(all_plates_df_join$individual)`__ total wells. 2 technical replicates per individual per plate. Biological replicates on alternative A or B plates.
+__`r length(unique(all_plates_df_join$individual))`__ individual DO mice were identified for __`r length(all_plates_df_join$individual)`__ total wells. 2 technical replicates per individual per plate. Biological replicates on alternative A or B plates.
 
 - sample data is joined from external csv sample_lookup.csv and growth_lookup.csv
-- plate identification is not a plate - this is 'run'. 
+- plate identification is not a plate. Plates are found in column _run_.
 
 ```{r}
 schema_construction <- all_plates_df_join %>%
@@ -249,19 +328,35 @@ schema_construction <- all_plates_df_join %>%
 DT::datatable(schema_construction, rownames=FALSE, caption="Concentration frequencies by sex and experiment (plate)")
 ```
 
+- __Total individuals in harmony output__ `r length(unique(all_plates_df_join$individual))`
+
+- __Total plates__   `r length(unique(all_plates_df_join$run))` 
+
+- __Total wells__ `r nrow(all_plates_df_join)`
+
+- __Missing concentration__ `r percent(1- mean(complete.cases(all_plates_df_join$concentration)))`
+
+- __Missing plate__ `r percent(1- mean(complete.cases(all_plates_df_join$run)))`
+
+- __Missing sex__ `r percent(1- mean(complete.cases(all_plates_df_join$sex)))`
+
+
 ```{r}
 schema_construction_wells <- all_plates_df_join %>%
-  dplyr::count(plate, run, concentration) %>% # may be plate_id
-  tidyr::spread(concentration, n, fill = 0) %>%
-  arrange(plate) %>%
-  mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
+  dplyr::rename(series = plate) %>%
+  dplyr::rename(plate = run) %>%
+  dplyr::count(plate, series, sex, concentration) %>% # may be plate_id
+  #tidyr::spread(series, n, fill = 0) %>% 
+  tidyr::spread(concentration, n, fill = 0)
+  #arrange(series)# %>%
+  #mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
 
-DT::datatable(schema_construction_wells, rownames=FALSE, caption="Concentration frequencies by 'run' (plate)")
+DT::datatable(schema_construction_wells, rownames=FALSE, caption="Individual concentration frequencies")
 ```
 
 ### QA Technical Replicates
 
-```{r}
+```{r echo=FALSE, results='hide',message=FALSE}
 a1_individuals<-all_plates_df_join[ which(all_plates_df_join$plate=='A1'), ]$individual
 a2_individuals<-all_plates_df_join[ which(all_plates_df_join$plate=='A2'), ]$individual
 b1_individuals<-all_plates_df_join[ which(all_plates_df_join$plate=='B1'), ]$individual
@@ -288,9 +383,10 @@ series <- c("A1","A2","B1","B2")
 ## Check if each subset mentions each symptom or not
 concentration_mat <-purrr::map_dfc( series,str_detect,as.character(metadata$do_concentration_arr)) %>%
     data.frame() %>%
-    t() %>% # transpose the result, ugh
+    t() %>% # transpose the result
     as_tibble()
-
+```
+```{r}
 colnames(concentration_mat)  <- metadata$do_concentration_arr
 concentration_mat$count <- schema_vis$cumsum[1:4]
 
