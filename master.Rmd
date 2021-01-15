@@ -215,12 +215,11 @@ __Explanation__
 ```{r message=FALSE, warning=FALSE, echo = FALSE}
 # point to masterdata dir
 setwd("data/discovery_invitro/")
-
-plate_collection_list <- harmony_read_plate_2(dir = "./do_focus")
-
-# founder_quantal_plate_list <- harmony_read_plate_2(dir = "./founders_quantal")
-# do_unfiltered_plate_list <- harmony_read_plate_2(dir = "./do_unfiltered")
-# do_screen_plate_list <- harmony_read_plate_2(dir = "./do_nucleiCounts")
+founders_quantal_collection <- harmony_read_plate_3(dir = "./founders_quantal")
+do_focus_collection <- harmony_read_plate_3(dir = "./do_focus")
+# temp batch effect testing code
+#test<- plate_collection_list$select_features(batch_cols = c("sex","concentration"))
+# check features
 ```
 
 ### Outstanding harmony loading issues
@@ -229,21 +228,34 @@ plate_collection_list <- harmony_read_plate_2(dir = "./do_focus")
 - Harmony output currently in an unwieldy state and being loaded agnostically as "plates"
 - Index file contains URLs to imagery and is potentially available for additional image analysis.
 
-## Generate a master plate data frame
+## Extract the master plate data frames
 
-- Creates an amalgamated data.frame from _harmony_read_plate's_ returned list object's constituent plate data and metadata.
+- Reads amalgamated data.frame from _harmony_read_plate's_ returned list object's constituent plate data and metadata.
+- Last 2 commands show how to extract the metadata for all plates
 
 ```{r}
-all_plates_df <- do.call(rbind.fill, lapply(plate_collection_list, function(x) {x@plate_df})) %>%
+do_focus_plates_df <- do_focus_collection$all_plates %>%
   tidyr::replace_na(list(concentration = 999)) %>% # change NA to 999 for ease of qa
   mutate(concentration = factor(concentration))
 
-#any(is.na(all_plates_df$concentration))
-#which(all_plates_df$concentration==999)
-#all_plates_df[all_plates_df$concentration==999, ]  
-#write.csv(all_plates_df[all_plates_df$concentration == 999, ], "~/Desktop/temp/missing_do.csv")  
+founders_quantal_plates_df <- founders_quantal_collection$all_plates %>%
+  tidyr::replace_na(list(concentration = 999)) %>% # change NA to 999 for ease of qa
+  mutate(concentration = factor(concentration))
+
 # contains appended headers from each PlateResults.txt
-plate_metadata_df <- do.call(rbind.fill, lapply(plate_collection_list, function(x) {x@plate_metadata}))
+#do_focus_collection$metadata
+#founders_quantal_collection$metadata
+```
+
+## Batch effect analysis
+
+- analyze column ranges appending from harmony and consider MAD (Median Absolute Deviation)
+- understand cell x cell or plate x plate
+- consider https://rdrr.io/github/LTLA/batchelor/man/clusterMNN.html ?
+- and PCA  + https://en.wikipedia.org/wiki/Median_absolute_deviation
+
+```{r}
+
 ```
 
 # Customize data
@@ -252,6 +264,8 @@ plate_metadata_df <- do.call(rbind.fill, lapply(plate_collection_list, function(
 - The pipeline is not mature and each dataset needs special consideration and relational information.
 
 ## Loading supplementary data
+
+### DO Lookups
 
 - Supplementary tables are contained inside __./lookups__. 
 
@@ -271,10 +285,8 @@ doscreen_sample_pivot <- tidyr::pivot_longer(doscreen_sample_lookup[,c("climb_id
   tidyr::drop_na(individual) %>% 
   distinct(individual, .keep_all = TRUE) # removing duplicate error in lookup csv
 
-all_plates_df_join <- all_plates_df %>%
+do_focus_plates_df_join <- do_focus_plates_df %>%
   left_join(doscreen_sample_pivot, by = "individual") 
-
-not_any_na <- function(x) all(!is.na(x))
 
 stain_series_lookup <- readr::read_csv("lookups/stain_info/do_all_plates_df_stainlookup.csv")
 ```
@@ -283,11 +295,11 @@ stain_series_lookup <- readr::read_csv("lookups/stain_info/do_all_plates_df_stai
 
 - Code block for unique data modification, error checking and custom considerations.
 
-### Feature engineering
+## Feature engineering
 
 ```{r}
 #addinggrowthquantiles
-# all_plates_df_join<- all_plates_df_join %>% 
+# do_focus_plates_df_join<- do_focus_plates_df_join %>% 
 #   mutate(GrowthQuantile = ifelse(
 #     viable_per %in% (0:250000), "slow",
 #     ifelse(viable_per %in% (250000:500000), "med_slow",
@@ -296,15 +308,15 @@ stain_series_lookup <- readr::read_csv("lookups/stain_info/do_all_plates_df_stai
 #     ))
 ```
 
-### Error proofing
+## Error proofing
+
+- use this as plate class method?
+
+### DO
 
 ```{r}
 # remove 0.5 concentrations in DO
-all_plates_df_join<-all_plates_df_join[!(all_plates_df_join$concentration==0.5),]
-
-# missing values?
-#sum(is.na(all_plates_df_join$sex))
-#setdiff(all_plates_df$individual,doscreen_sample_lookup$sample_1)
+do_focus_plates_df_join<-do_focus_plates_df_join[!(do_focus_plates_df_join$concentration==0.5),]
 ```
 
 ---
@@ -313,13 +325,13 @@ all_plates_df_join<-all_plates_df_join[!(all_plates_df_join$concentration==0.5),
 
 The following table shows counts for each individual's strain and sex along with the sample plate location. This will include some of the following - sex, plate, concentration, and strain (founders only).
 
-__`r length(unique(all_plates_df_join$individual))`__ individual DO mice were identified for __`r length(all_plates_df_join$individual)`__ total wells. 2 technical replicates per individual per plate. Biological replicates on alternative A or B plates.
+__`r length(unique(do_focus_plates_df_join$individual))`__ individual DO mice were identified for __`r length(do_focus_plates_df_join$individual)`__ total wells. 2 technical replicates per individual per plate. Biological replicates on alternative A or B plates.
 
 - sample data is joined from external csv sample_lookup.csv and growth_lookup.csv
 - plate identification is not a plate. Plates are found in column _run_.
 
 ```{r}
-schema_construction <- all_plates_df_join %>%
+schema_construction <- do_focus_plates_df_join %>%
   dplyr::count(plate, sex, concentration) %>% # may be plate_id
   tidyr::spread(concentration, n, fill = 0) %>%
   arrange(plate) %>%
@@ -328,21 +340,21 @@ schema_construction <- all_plates_df_join %>%
 DT::datatable(schema_construction, rownames=FALSE, caption="Concentration frequencies by sex and experiment (plate)")
 ```
 
-- __Total individuals in harmony output__ `r length(unique(all_plates_df_join$individual))`
+- __Total individuals in harmony output__ `r length(unique(do_focus_plates_df_join$individual))`
 
-- __Total plates__   `r length(unique(all_plates_df_join$run))` 
+- __Total plates__   `r length(unique(do_focus_plates_df_join$run))` 
 
-- __Total wells__ `r nrow(all_plates_df_join)`
+- __Total wells__ `r nrow(do_focus_plates_df_join)`
 
-- __Missing concentration__ `r percent(nrow(all_plates_df_join[all_plates_df_join$concentration == 999, ])/nrow(all_plates_df))`
+- __Missing concentration__ `r percent(nrow(do_focus_plates_df_join[do_focus_plates_df_join$concentration == 999, ])/nrow(do_focus_plates_df))`
 
-- __Missing plate__ `r percent(1- mean(complete.cases(all_plates_df_join$run)))`
+- __Missing plate__ `r percent(1- mean(complete.cases(do_focus_plates_df_join$run)))`
 
-- __Missing sex__ `r percent(1- mean(complete.cases(all_plates_df_join$sex)))`
+- __Missing sex__ `r percent(1- mean(complete.cases(do_focus_plates_df_join$sex)))`
 
 
 ```{r}
-schema_construction_wells <- all_plates_df_join %>%
+schema_construction_wells <- do_focus_plates_df_join %>%
   dplyr::rename(series = plate) %>%
   dplyr::rename(plate = run) %>%
   dplyr::count(plate, series, sex, concentration) %>% # may be plate_id
@@ -357,10 +369,10 @@ DT::datatable(schema_construction_wells, rownames=FALSE, caption="Individual con
 ### QA Technical Replicates
 
 ```{r echo=FALSE, results='hide',message=FALSE}
-a1_individuals<-all_plates_df_join[ which(all_plates_df_join$plate=='A1'), ]$individual
-a2_individuals<-all_plates_df_join[ which(all_plates_df_join$plate=='A2'), ]$individual
-b1_individuals<-all_plates_df_join[ which(all_plates_df_join$plate=='B1'), ]$individual
-b2_individuals<-all_plates_df_join[ which(all_plates_df_join$plate=='B2'), ]$individual
+a1_individuals<-do_focus_plates_df_join[ which(do_focus_plates_df_join$plate=='A1'), ]$individual
+a2_individuals<-do_focus_plates_df_join[ which(do_focus_plates_df_join$plate=='A2'), ]$individual
+b1_individuals<-do_focus_plates_df_join[ which(do_focus_plates_df_join$plate=='B1'), ]$individual
+b2_individuals<-do_focus_plates_df_join[ which(do_focus_plates_df_join$plate=='B2'), ]$individual
 
 prop_diff_A1A2 <- setdiff(a1_individuals,a2_individuals)
 prop_same_A1A2 <- intersect(a1_individuals,a2_individuals)
@@ -373,14 +385,14 @@ a2_total<-length(unique(a2_individuals))
 b1_total<-length(unique(b1_individuals))
 b2_total<-length(unique(b2_individuals))
 
-schema_vis <- all_plates_df_join %>%
+schema_vis <- do_focus_plates_df_join %>%
   dplyr::count(plate, concentration) %>% # may be plate_id
   tidyr::spread(concentration, n, fill = 0) %>%
   #arrange(plate) %>%
   mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
 
 series <- c("A1","A2","B1","B2")
-## Check if each subset mentions each symptom or not
+## Explain this
 concentration_mat <-purrr::map_dfc( series,str_detect,as.character(metadata$do_concentration_arr)) %>%
     data.frame() %>%
     t() %>% # transpose the result

@@ -5443,7 +5443,7 @@ div.tocify {
 <h1 class="title toc-ignore">Arsenic Systems Toxicology Analysis / Project Reconstruction</h1>
 <h4 class="author">Robert Sellers / Callan O’Conner</h4>
 <address class="author_afil">
-The Jackson Laboratory<br><h4 class="date">Last knit on: 14 January 2021</h4>
+The Jackson Laboratory<br><h4 class="date">Last knit on: 15 January 2021</h4>
 
 </div>
 
@@ -5647,21 +5647,23 @@ knitr::kable(metadata$stains_df, caption=&quot;Stains applied&quot;)</code></pre
 </ul>
 </div>
 </div>
-<div id="generate-a-master-plate-data-frame" class="section level2">
-<h2><span class="header-section-number">5.2</span> Generate a master plate data frame</h2>
+<div id="extract-the-master-plate-data-frames" class="section level2">
+<h2><span class="header-section-number">5.2</span> Extract the master plate data frames</h2>
 <ul>
-<li>Creates an amalgamated data.frame from <em>harmony_read_plate’s</em> returned list object’s constituent plate data and metadata.</li>
+<li>Reads amalgamated data.frame from <em>harmony_read_plate’s</em> returned list object’s constituent plate data and metadata.</li>
+<li>Last 2 commands show how to extract the metadata for all plates</li>
 </ul>
-<pre class="r"><code>all_plates_df &lt;- do.call(rbind.fill, lapply(plate_collection_list, function(x) {x@plate_df})) %&gt;%
-  tidyr::replace_na(list(concentration = 999)) %&gt;%
+<pre class="r"><code>do_focus_plates_df &lt;- do_focus_collection$all_plates %&gt;%
+  tidyr::replace_na(list(concentration = 999)) %&gt;% # change NA to 999 for ease of qa
   mutate(concentration = factor(concentration))
 
-#any(is.na(all_plates_df$concentration))
-#which(all_plates_df$concentration==999)
-#all_plates_df[all_plates_df$concentration==999, ]  
-#write.csv(all_plates_df[all_plates_df$concentration == 999, ], &quot;~/Desktop/temp/missing_do.csv&quot;)  
+founders_quantal_plates_df &lt;- founders_quantal_collection$all_plates %&gt;%
+  tidyr::replace_na(list(concentration = 999)) %&gt;% # change NA to 999 for ease of qa
+  mutate(concentration = factor(concentration))
+
 # contains appended headers from each PlateResults.txt
-plate_metadata_df &lt;- do.call(rbind.fill, lapply(plate_collection_list, function(x) {x@plate_metadata}))</code></pre>
+#do_focus_collection$metadata
+#founders_quantal_collection$metadata</code></pre>
 </div>
 </div>
 <div id="customize-data" class="section level1">
@@ -5672,6 +5674,8 @@ plate_metadata_df &lt;- do.call(rbind.fill, lapply(plate_collection_list, functi
 </ul>
 <div id="loading-supplementary-data" class="section level2">
 <h2><span class="header-section-number">6.1</span> Loading supplementary data</h2>
+<div id="do-lookups" class="section level3">
+<h3><span class="header-section-number">6.1.1</span> DO Lookups</h3>
 <ul>
 <li>Supplementary tables are contained inside <strong>./lookups</strong>.</li>
 </ul>
@@ -5690,22 +5694,22 @@ doscreen_sample_pivot &lt;- tidyr::pivot_longer(doscreen_sample_lookup[,c(&quot;
   tidyr::drop_na(individual) %&gt;% 
   distinct(individual, .keep_all = TRUE) # removing duplicate error in lookup csv
 
-all_plates_df_join &lt;- all_plates_df %&gt;%
+do_focus_plates_df_join &lt;- do_focus_plates_df %&gt;%
   left_join(doscreen_sample_pivot, by = &quot;individual&quot;) 
 
-not_any_na &lt;- function(x) all(!is.na(x))
-
 stain_series_lookup &lt;- readr::read_csv(&quot;lookups/stain_info/do_all_plates_df_stainlookup.csv&quot;)</code></pre>
+</div>
 </div>
 <div id="modification" class="section level2">
 <h2><span class="header-section-number">6.2</span> Modification</h2>
 <ul>
 <li>Code block for unique data modification, error checking and custom considerations.</li>
 </ul>
-<div id="feature-engineering" class="section level3">
-<h3><span class="header-section-number">6.2.1</span> Feature engineering</h3>
+</div>
+<div id="feature-engineering" class="section level2">
+<h2><span class="header-section-number">6.3</span> Feature engineering</h2>
 <pre class="r"><code>#addinggrowthquantiles
-# all_plates_df_join&lt;- all_plates_df_join %&gt;% 
+# do_focus_plates_df_join&lt;- do_focus_plates_df_join %&gt;% 
 #   mutate(GrowthQuantile = ifelse(
 #     viable_per %in% (0:250000), &quot;slow&quot;,
 #     ifelse(viable_per %in% (250000:500000), &quot;med_slow&quot;,
@@ -5713,14 +5717,15 @@ stain_series_lookup &lt;- readr::read_csv(&quot;lookups/stain_info/do_all_plates
 #     ifelse(viable_per %in% 1000000:10000000, &quot;high&quot;, &quot;NONE&quot;)))
 #     ))</code></pre>
 </div>
-<div id="error-proofing" class="section level3">
-<h3><span class="header-section-number">6.2.2</span> Error proofing</h3>
+<div id="error-proofing" class="section level2">
+<h2><span class="header-section-number">6.4</span> Error proofing</h2>
+<ul>
+<li>use this as plate class method?</li>
+</ul>
+<div id="do" class="section level3">
+<h3><span class="header-section-number">6.4.1</span> DO</h3>
 <pre class="r"><code># remove 0.5 concentrations in DO
-all_plates_df_join&lt;-all_plates_df_join[!(all_plates_df_join$concentration==0.5),]
-
-# missing values?
-#sum(is.na(all_plates_df_join$sex))
-#setdiff(all_plates_df$individual,doscreen_sample_lookup$sample_1)</code></pre>
+do_focus_plates_df_join&lt;-do_focus_plates_df_join[!(do_focus_plates_df_join$concentration==0.5),]</code></pre>
 <hr />
 </div>
 </div>
@@ -5733,15 +5738,15 @@ all_plates_df_join&lt;-all_plates_df_join[!(all_plates_df_join$concentration==0.
 <li>sample data is joined from external csv sample_lookup.csv and growth_lookup.csv</li>
 <li>plate identification is not a plate. Plates are found in column <em>run</em>.</li>
 </ul>
-<pre class="r"><code>schema_construction &lt;- all_plates_df_join %&gt;%
+<pre class="r"><code>schema_construction &lt;- do_focus_plates_df_join %&gt;%
   dplyr::count(plate, sex, concentration) %&gt;% # may be plate_id
   tidyr::spread(concentration, n, fill = 0) %&gt;%
   arrange(plate) %&gt;%
   mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
 
 DT::datatable(schema_construction, rownames=FALSE, caption=&quot;Concentration frequencies by sex and experiment (plate)&quot;)</code></pre>
-<div id="htmlwidget-d22a4f83702d39e2eb7d" style="width:100%;height:auto;" class="datatables html-widget"></div>
-<script type="application/json" data-for="htmlwidget-d22a4f83702d39e2eb7d">{"x":{"filter":"none","caption":"<caption>Concentration frequencies by sex and experiment (plate)<\/caption>","data":[["A1","A1","A1","A2","A2","A2","B1","B1","B1","B2","B2","B2",null],["F","M",null,"F","M",null,"F","M",null,"F","M",null,null],[132,120,12,120,100,8,88,116,24,99,128,26,0],[132,120,12,120,100,8,87,117,24,99,128,26,0],[132,120,12,120,100,8,88,116,24,99,128,26,0],[132,120,12,120,100,8,88,116,24,99,128,26,0],[132,120,12,120,100,8,88,116,24,99,128,26,0],[132,120,12,120,100,8,87,116,24,97,128,26,0],[132,120,12,120,100,8,88,116,24,97,128,26,0],[132,120,12,120,100,8,87,115,24,94,122,26,0],[0,0,0,0,0,0,0,0,0,0,0,0,439],[1056,960,96,960,800,64,701,928,192,783,1018,208,0]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th>plate<\/th>\n      <th>sex<\/th>\n      <th>0<\/th>\n      <th>0.01<\/th>\n      <th>0.1<\/th>\n      <th>0.75<\/th>\n      <th>1<\/th>\n      <th>1.25<\/th>\n      <th>2<\/th>\n      <th>5<\/th>\n      <th>999<\/th>\n      <th>cumsum<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"columnDefs":[{"className":"dt-right","targets":[2,3,4,5,6,7,8,9,10,11]}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
+<div id="htmlwidget-96bbc95b73550697fcfa" style="width:100%;height:auto;" class="datatables html-widget"></div>
+<script type="application/json" data-for="htmlwidget-96bbc95b73550697fcfa">{"x":{"filter":"none","caption":"<caption>Concentration frequencies by sex and experiment (plate)<\/caption>","data":[["A1","A1","A1","A2","A2","A2","B1","B1","B1","B2","B2","B2",null],["F","M",null,"F","M",null,"F","M",null,"F","M",null,null],[132,120,12,120,100,8,88,116,24,99,128,26,0],[132,120,12,120,100,8,87,117,24,99,128,26,0],[132,120,12,120,100,8,88,116,24,99,128,26,0],[132,120,12,120,100,8,88,116,24,99,128,26,0],[132,120,12,120,100,8,88,116,24,99,128,26,0],[132,120,12,120,100,8,87,116,24,97,128,26,0],[132,120,12,120,100,8,88,116,24,97,128,26,0],[132,120,12,120,100,8,87,115,24,94,122,26,0],[0,0,0,0,0,0,0,0,0,0,0,0,439],[1056,960,96,960,800,64,701,928,192,783,1018,208,0]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th>plate<\/th>\n      <th>sex<\/th>\n      <th>0<\/th>\n      <th>0.01<\/th>\n      <th>0.1<\/th>\n      <th>0.75<\/th>\n      <th>1<\/th>\n      <th>1.25<\/th>\n      <th>2<\/th>\n      <th>5<\/th>\n      <th>999<\/th>\n      <th>cumsum<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"columnDefs":[{"className":"dt-right","targets":[2,3,4,5,6,7,8,9,10,11]}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
 <ul>
 <li><p><strong>Total individuals in harmony output</strong> 236</p></li>
 <li><p><strong>Total plates</strong> 22</p></li>
@@ -5750,7 +5755,7 @@ DT::datatable(schema_construction, rownames=FALSE, caption=&quot;Concentration f
 <li><p><strong>Missing plate</strong> 5.35%</p></li>
 <li><p><strong>Missing sex</strong> 12.18%</p></li>
 </ul>
-<pre class="r"><code>schema_construction_wells &lt;- all_plates_df_join %&gt;%
+<pre class="r"><code>schema_construction_wells &lt;- do_focus_plates_df_join %&gt;%
   dplyr::rename(series = plate) %&gt;%
   dplyr::rename(plate = run) %&gt;%
   dplyr::count(plate, series, sex, concentration) %&gt;% # may be plate_id
@@ -5760,8 +5765,8 @@ DT::datatable(schema_construction, rownames=FALSE, caption=&quot;Concentration f
   #mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
 
 DT::datatable(schema_construction_wells, rownames=FALSE, caption=&quot;Individual concentration frequencies&quot;)</code></pre>
-<div id="htmlwidget-86098c6e8ff675ab1f1a" style="width:100%;height:auto;" class="datatables html-widget"></div>
-<script type="application/json" data-for="htmlwidget-86098c6e8ff675ab1f1a">{"x":{"filter":"none","caption":"<caption>Individual concentration frequencies<\/caption>","data":[["20222","20222","20222","20222","20222","20222","20222","20222","20223","20223","20223","20223","20223","20223","20223","20223","20236","20236","20236","20236","20236","20236","20236","20236","20236","20236","20244","20244","20244","20244","20244","20244","20244","20255","20255","20255","20255","20255","20255","20255","20255","20255","20255","20264","20264","20264","20264","20264","20264","20264","20264","20265","20265","20265","20265","20265","20265","20265","20265","20268","20268","20268","20268","20268","20268","20268","20268","20268","20268","20269","20269","20269","20269","20269","20269","20269","20269","20279","20279","20279","20279","20279","20279","20279","20279","20280","20280","20280","20280","20280","20280","20280","20280","20280","20280","20281","20281","20281","20281","20281","20281","20281","20281","20286","20286","20286","20286","20286","20286","20286","20286","20288","20288","20288","20288","20288","20288","20289","20289","20289","20289","20289","20289","20289","20289","20292","20292","20292","20292","20292","20292","20292","20292","20292","20295","20295","20295","20295","20295","20295","20295","20295","20303","20303","20303","20303","20303","20303","20303","20303","20307","20307","20307","20307","20307","20307","20307","20307","20308","20308","20308","20308","20308","20308","20308","20308","20308","C20244","C20244",null],["A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A1","A2","A2","A2","B1","B1","B2","B2","A1","A1","A1","B1","B1","B2","B2","A1","A1","A1","A2","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","B1","B1","B1","B2","B2","B2","A1","A1","A1","A2","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B1","B2","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A1","A2","A2","A2","B2","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B2","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B1","B2","B2","A2","A2",null],["F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M",null,"F","M",null,"F","M","F","M","F","M",null,"F","M","F","M","F","M",null,"F","M",null,"F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M",null,"F","M",null,"F","M",null,"F","M",null,"F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M",null,"F","M",null,"F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M",null,null,"F","M","F","M","M",null,"M",null,"F","M",null,"F","M",null,"F","M",null,"F","M","F","M","F","M","F","M","F","M","F","M","M","F","M",null,"F","M","F","M","F","M","F","M","F","M","F","M","F","M",null,"F","M","F","M",null],[6,6,6,6,6,6,12,12,8,4,8,4,4,8,4,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,5,8,8,16,4,8,4,8,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,3,8,4,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,5,8,8,16,4,8,4,9,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,4,8,4,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,5,8,8,16,4,8,4,8,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,4,8,4,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,5,8,8,16,4,8,4,8,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,4,8,4,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,5,8,8,16,4,8,4,8,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,3,8,3,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,7,4,8,8,16,4,8,4,9,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,4,8,3,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,4,8,8,16,4,8,4,8,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,1,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,13,2,6,6,4,8,0],[6,6,6,6,6,6,7,6,8,4,8,4,3,8,4,8,8,2,2,8,2,2,6,5,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,7,5,8,8,16,4,8,4,9,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,439]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th>plate<\/th>\n      <th>series<\/th>\n      <th>sex<\/th>\n      <th>0<\/th>\n      <th>0.01<\/th>\n      <th>0.1<\/th>\n      <th>0.75<\/th>\n      <th>1<\/th>\n      <th>1.25<\/th>\n      <th>2<\/th>\n      <th>5<\/th>\n      <th>999<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"columnDefs":[{"className":"dt-right","targets":[3,4,5,6,7,8,9,10,11]}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
+<div id="htmlwidget-674ccacc1563969e64d7" style="width:100%;height:auto;" class="datatables html-widget"></div>
+<script type="application/json" data-for="htmlwidget-674ccacc1563969e64d7">{"x":{"filter":"none","caption":"<caption>Individual concentration frequencies<\/caption>","data":[["20222","20222","20222","20222","20222","20222","20222","20222","20223","20223","20223","20223","20223","20223","20223","20223","20236","20236","20236","20236","20236","20236","20236","20236","20236","20236","20244","20244","20244","20244","20244","20244","20244","20255","20255","20255","20255","20255","20255","20255","20255","20255","20255","20264","20264","20264","20264","20264","20264","20264","20264","20265","20265","20265","20265","20265","20265","20265","20265","20268","20268","20268","20268","20268","20268","20268","20268","20268","20268","20269","20269","20269","20269","20269","20269","20269","20269","20279","20279","20279","20279","20279","20279","20279","20279","20280","20280","20280","20280","20280","20280","20280","20280","20280","20280","20281","20281","20281","20281","20281","20281","20281","20281","20286","20286","20286","20286","20286","20286","20286","20286","20288","20288","20288","20288","20288","20288","20289","20289","20289","20289","20289","20289","20289","20289","20292","20292","20292","20292","20292","20292","20292","20292","20292","20295","20295","20295","20295","20295","20295","20295","20295","20303","20303","20303","20303","20303","20303","20303","20303","20307","20307","20307","20307","20307","20307","20307","20307","20308","20308","20308","20308","20308","20308","20308","20308","20308","C20244","C20244",null],["A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A1","A2","A2","A2","B1","B1","B2","B2","A1","A1","A1","B1","B1","B2","B2","A1","A1","A1","A2","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","B1","B1","B1","B2","B2","B2","A1","A1","A1","A2","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B1","B2","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A1","A2","A2","A2","B2","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B2","B2","B2","A1","A1","A2","A2","B1","B1","B2","B2","A1","A1","A2","A2","B1","B1","B1","B2","B2","A2","A2",null],["F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M",null,"F","M",null,"F","M","F","M","F","M",null,"F","M","F","M","F","M",null,"F","M",null,"F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M",null,"F","M",null,"F","M",null,"F","M",null,"F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M",null,"F","M",null,"F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M","F","M",null,null,"F","M","F","M","M",null,"M",null,"F","M",null,"F","M",null,"F","M",null,"F","M","F","M","F","M","F","M","F","M","F","M","M","F","M",null,"F","M","F","M","F","M","F","M","F","M","F","M","F","M",null,"F","M","F","M",null],[6,6,6,6,6,6,12,12,8,4,8,4,4,8,4,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,5,8,8,16,4,8,4,8,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,3,8,4,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,5,8,8,16,4,8,4,9,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,4,8,4,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,5,8,8,16,4,8,4,8,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,4,8,4,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,5,8,8,16,4,8,4,8,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,4,8,4,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,5,8,8,16,4,8,4,8,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,3,8,3,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,7,4,8,8,16,4,8,4,9,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[6,6,6,6,6,6,12,12,8,4,8,4,4,8,3,8,8,2,2,8,2,2,6,6,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,8,4,8,8,16,4,8,4,8,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,1,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,13,2,6,6,4,8,0],[6,6,6,6,6,6,7,6,8,4,8,4,3,8,4,8,8,2,2,8,2,2,6,5,6,6,2,8,2,6,6,6,6,2,8,2,2,8,2,4,7,5,8,8,16,4,8,4,9,4,8,8,4,6,4,2,6,4,2,8,2,2,8,2,2,6,6,6,6,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,8,4,8,4,8,2,2,8,2,2,6,6,6,6,4,8,4,8,6,6,6,6,4,8,4,8,10,2,10,2,12,12,6,6,6,6,6,6,6,6,4,16,4,2,8,2,4,6,2,10,2,10,2,10,2,10,2,6,6,6,6,0,2,8,2,8,4,8,4,4,8,4,8,6,6,6,6,8,14,2,6,6,4,8,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,439]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th>plate<\/th>\n      <th>series<\/th>\n      <th>sex<\/th>\n      <th>0<\/th>\n      <th>0.01<\/th>\n      <th>0.1<\/th>\n      <th>0.75<\/th>\n      <th>1<\/th>\n      <th>1.25<\/th>\n      <th>2<\/th>\n      <th>5<\/th>\n      <th>999<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"columnDefs":[{"className":"dt-right","targets":[3,4,5,6,7,8,9,10,11]}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
 <div id="qa-technical-replicates" class="section level3">
 <h3><span class="header-section-number">7.0.1</span> QA Technical Replicates</h3>
 <pre class="r"><code>colnames(concentration_mat)  &lt;- metadata$do_concentration_arr
@@ -5780,11 +5785,18 @@ concentration_mat %&gt;% print(n = nrow(concentration_mat))</code></pre>
 </div>
 <div id="predictive-analysis" class="section level1">
 <h1><span class="header-section-number">8</span> Predictive Analysis</h1>
+<div id="batch-effect-analysis" class="section level2">
+<h2><span class="header-section-number">8.1</span> Batch effect analysis</h2>
 <ul>
-<li>the following are found and new experimental analyses</li>
+<li><p>analyze column ranges appending from harmony and consider MAD (Median Absolute Deviation)</p></li>
+<li><p>understand cell x cell or plate x plate</p></li>
+<li><p>consider <a href="https://rdrr.io/github/LTLA/batchelor/man/clusterMNN.html" class="uri">https://rdrr.io/github/LTLA/batchelor/man/clusterMNN.html</a> ?</p></li>
+<li><p>and PCA + <a href="https://en.wikipedia.org/wiki/Median_absolute_deviation" class="uri">https://en.wikipedia.org/wiki/Median_absolute_deviation</a></p></li>
+<li><p>the following are found and new experimental analyses</p></li>
 </ul>
+</div>
 <div id="data-reduction-and-variance" class="section level2">
-<h2><span class="header-section-number">8.1</span> Data Reduction and Variance</h2>
+<h2><span class="header-section-number">8.2</span> Data Reduction and Variance</h2>
 <ul>
 <li>Analysis of <em>sources of external variation that can influence image analysis and quantification</em></li>
 <li><em>We observed batch effects and additional sources of variation</em> (how?)
@@ -5809,7 +5821,7 @@ concentration_mat %&gt;% print(n = nrow(concentration_mat))</code></pre>
 </ol>
 </div>
 <div id="dose-response-benchmark-dose-estimation" class="section level2">
-<h2><span class="header-section-number">8.2</span> Dose-response &amp; benchmark dose estimation</h2>
+<h2><span class="header-section-number">8.3</span> Dose-response &amp; benchmark dose estimation</h2>
 <ul>
 <li>Multi-parameter dose response curve fitting summaries
 <ul>
@@ -5876,7 +5888,7 @@ model_stress_LL_4 &lt;- drm(mito_stress_in_focus ~ as.numeric(concentration),
                        pmodels = c(~mouse-1, ~mouse-1, ~mouse-1, ~mouse-1)
                        )</code></pre>
 <div id="drc-distribution-example---do" class="section level3">
-<h3><span class="header-section-number">8.2.1</span> DRC distribution example - DO</h3>
+<h3><span class="header-section-number">8.3.1</span> DRC distribution example - DO</h3>
 <ul>
 <li>0.5 concentration ignored</li>
 <li>chunk turned off</li>
@@ -5910,7 +5922,7 @@ summary(log_nuclei_number_of_objects_LL4)
 #confint(log_nuclei_number_of_objects_LL4, level = 0.95)</code></pre>
 </div>
 <div id="drc-boxplot-example---do" class="section level3">
-<h3><span class="header-section-number">8.2.2</span> DRC boxplot example - DO</h3>
+<h3><span class="header-section-number">8.3.2</span> DRC boxplot example - DO</h3>
 <pre class="r"><code>p &lt;- ggplot(
     data = do_all_plates_df, aes(x = concentration, y = nuclei_number_of_objects)
   ) +
@@ -5931,10 +5943,10 @@ dependent_variable_analysis_dr(founders_quantal_all_plates_df,ignore, response_v
 </div>
 </div>
 <div id="cell-line-feature-selection" class="section level2">
-<h2><span class="header-section-number">8.3</span> Cell-line feature selection</h2>
+<h2><span class="header-section-number">8.4</span> Cell-line feature selection</h2>
 </div>
 <div id="rix-validation" class="section level2">
-<h2><span class="header-section-number">8.4</span> RIX Validation</h2>
+<h2><span class="header-section-number">8.5</span> RIX Validation</h2>
 <ul>
 <li>are F1 hybrid mice from pairs of CC strains</li>
 <li>recombinant, inbred intercross, RIX mice</li>
@@ -5943,7 +5955,7 @@ dependent_variable_analysis_dr(founders_quantal_all_plates_df,ignore, response_v
 </ul>
 </div>
 <div id="pathway-modeling" class="section level2">
-<h2><span class="header-section-number">8.5</span> Pathway modeling</h2>
+<h2><span class="header-section-number">8.6</span> Pathway modeling</h2>
 <ul>
 <li>using omics data</li>
 <li>identify predictive biomarkers and ‘key molecular events’</li>
@@ -5951,7 +5963,7 @@ dependent_variable_analysis_dr(founders_quantal_all_plates_df,ignore, response_v
 </ul>
 </div>
 <div id="gxe-mapping-strategy" class="section level2">
-<h2><span class="header-section-number">8.6</span> GxE mapping strategy</h2>
+<h2><span class="header-section-number">8.7</span> GxE mapping strategy</h2>
 <ul>
 <li>map and identify genetic loci that are responsible for individual variation in susceptibility in DO mice using a novel G x E mapping strategy</li>
 </ul>
