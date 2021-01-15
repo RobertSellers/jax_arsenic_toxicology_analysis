@@ -23,8 +23,8 @@ plate_collection_class <- function(list_of_plates){
     metadata = do.call(rbind.fill, lapply(list_of_plates, function(x) {x$plate_metadata})),
     # extration methods
     # selects only predictors + input batches
-    select_features = function(batch_cols){
-      if(missing(batch_cols)){
+    select_features = function(keep){
+      if(missing(keep)){
         stop("No batch columns selected.")
       }else{
         start_idx = grep("timepoint", colnames(self.all_plates))+1
@@ -35,11 +35,6 @@ plate_collection_class <- function(list_of_plates){
                       self.all_plates[,start_idx:end_idx]) #features in back
                 )
       }
-    },
-    show_features = function(){
-      start_idx = grep("timepoint", colnames(self.all_plates))+1
-      end_idx = grep("number_of_analyzed_fields", colnames(self.all_plates))-1
-      cat(colnames(cbind(self.all_plates[,start_idx:end_idx])))
     }
   ))
 }
@@ -76,15 +71,9 @@ harmony_read_plate_3 <- function(dir){
     plate_obj_name <- paste0('d',sub(" ", "_", gsub('\\-', '',sub("/","__",paste0(file_list[3])))),"_e",e)
     
     cur_path <- file.path(dir,file_list[3])
-    
-    # str determines where files should be if applicable
-    index_file <- file.path(cur_path, "indexfile.txt")
-    plate_file <- file.path(cur_path, paste0("Evaluation", e), "PlateResults.txt")
-    
-    # not dynamic...needs improvement
-    cells_file <- file.path(cur_path, paste0("Evaluation", e), "Objects_Population - Nuclei Selected.txt")
-    
+
     ###### INDEX FILE#######
+    index_file <- file.path(cur_path, "indexfile.txt")
     if(file.exists(index_file)){
       
       idx_df <- read_tsv(index_file) %>%
@@ -101,7 +90,8 @@ harmony_read_plate_3 <- function(dir){
     }
     
     # ###### PLATE FILE#######
-    # 
+    plate_file <- file.path(cur_path, paste0("Evaluation", e), "PlateResults.txt")
+    
     if(file.exists(plate_file)){
       
       # handle metadata for plate header
@@ -121,6 +111,8 @@ harmony_read_plate_3 <- function(dir){
     }
     
     # ###### CELLS FILE#######
+    #cells_file <- file.path(cur_path, paste0("Evaluation", e), "Objects_Population - Nuclei Selected.txt")
+    cells_file <- list.files(file.path(cur_path, paste0("Evaluation", e)), full.names = TRUE, pattern = "Objects_Population")[1]
     if(file.exists(cells_file)){
       
       # read file header
