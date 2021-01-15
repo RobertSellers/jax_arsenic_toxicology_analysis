@@ -60,7 +60,7 @@ _Genetic analysis in the context of a quantitative environmental perturbation wi
 
 ---
 
-# R package environment
+# Programming environment
 
 Click on __CODE__ button to view requirements.
 
@@ -126,12 +126,13 @@ __BOX dir DO_Screen__
 - do_focus (evaluating)
 
 ```{r}
-selected_dir <- "./do_focus"
-#selected_dir <- "./founders_quantal"
+do_selected_dir <- "./do_focus"
+founders_selected_dir <- "./founders_quantal"
 #selected_dir <- "./do_unfiltered"
 ```
 
-__<span style="color:red; font-size:26px;">`r paste("-> ",sub('./', '', selected_dir))`</span>__ was selected in this file's code.
+- __<span style="color:red; font-size:20px;">`r paste(sub('./', '', founders_selected_dir))`</span>__ selected
+- __<span style="color:red; font-size:20px;">`r paste(sub('./', '', do_selected_dir))`</span>__ selected
 
 # Experimental Parameters
 
@@ -154,27 +155,25 @@ do_metadata <- list(
   concentration_arr = c(0, 0.01, 0.1, 0.75, 1, 1.25, 2, 5), # in ppm
   sample_size = 250 # proposed sample size
 )
-```
-
-### Global metadata
-
-```{r}
+# combine all
 metadata <- list(
-  exposure_to_labeling_duration_hours = 24, #time from culturing to image ready state
+  exposure_to_labeling_duration = 24, #hours from culturing to image ready state
   stains_df = data.frame(
   "stain" = c("mitotracker","h2ax","hoescht"),
   "phenotype_targets" = c("cytotoxicity","genotoxicity","oxidative_stress")
   ),
+  founders_strains = c("AJ", "B6", "129", "NOD", "NZO", "CAST", "PWK", "WSB"),
+  exposure_limit = 0.01, #in ppm
   founders_metadata = founders_metadata,
   do_metadata = do_metadata
 )
 rm(founders_metadata); rm(do_metadata)
-knitr::kable(metadata$stains_df, caption="Stains applied")
+# knitr::kable(metadata$stains_df, caption="Stains applied")
 ```
 
 __Global Sample Parameters__  
   
-  - exposure to labeling duration (in hours): `r metadata$exposure_to_labeling_duration_hours`
+  - exposure to labeling duration (in hours): `r metadata$exposure_to_labeling_duration`
 
 __Founders Sample Summary__
 
@@ -188,6 +187,8 @@ __DO Sample Summary__
 
 
 ## Aim 3: In Vivo Renal
+
+- Nothing yet
 
 ---
 
@@ -247,30 +248,79 @@ founders_quantal_plates_df <- founders_quantal_collection$all_plates %>%
 #founders_quantal_collection$metadata
 ```
 
-## Batch effect analysis
+# Data Treatments
+
+## Founders
+### Supplementary data
+
+- none incorporated so far
+- ought to have its own top level section?
+
+### Modification
+
+- need to refactor
+
+```{r}
+# plate_list$dFounders_A1_Whole_New__20200115T13_25_19Measurement_1_e1@plate_df <-
+# plate_list$dFounders_A1_Whole_New__20200115T13_25_19Measurement_1_e1@plate_df %>%
+#   filter(!is.na(cell_type)) %>% 
+#   mutate(plate_name = 'A1')
+# 
+# plate_list$dFounders_B1_Whole__20200103T10_34_56Measurement_1_e3@plate_df <- plate_list$dFounders_B1_Whole__20200103T10_34_56Measurement_1_e3@plate_df %>%
+#   filter(mouse != "PWK_2F") %>% mutate(plate_name = 'B1')
+# 
+# plate_list$dFounders_AA1__20200113T14_27_40Measurement_1_e3@plate_df<-plate_list$dFounders_AA1__20200113T14_27_40Measurement_1_e3@plate_df %>% mutate(plate_name = 'AA1')
+# 
+# plate_list$dFounders_BB1__20200114T09_14_08Measurement_1_e3@plate_df<-plate_list$dFounders_BB1__20200114T09_14_08Measurement_1_e3@plate_df %>% mutate(plate_name = 'BB1')
+# 
+# plate_list$dFounders_C1_Whole__20191230T10_37_26Measurement_1_e2@plate_df<-plate_list$dFounders_C1_Whole__20191230T10_37_26Measurement_1_e2@plate_df %>% mutate(plate_name = 'C1')
+# 
+# plate_list$dFounders_CC1__20200115T09_21_08Measurement_1_e3@plate_df <- plate_list$dFounders_CC1__20200115T09_21_08Measurement_1_e3@plate_df %>% mutate(plate_name = 'CC1')
+# 
+# plate_list$dFounders_D1_Whole__20191230T13_52_41Measurement_1_e2@plate_df<-plate_list$dFounders_D1_Whole__20191230T13_52_41Measurement_1_e2@plate_df %>% mutate(plate_name = 'D1') %>% 
+#   mutate(sex = "F")
+# 
+# plate_list$dFounders_DD1__20200114T13_08_38Measurement_1_e3@plate_df<-plate_list$dFounders_DD1__20200114T13_08_38Measurement_1_e3@plate_df %>% mutate(plate_name = 'DD1')
+# 
+# plate_list$dFounders_E1_Whole__20200102T08_52_12Measurement_1_e4@plate_df <- plate_list$dFounders_E1_Whole__20200102T08_52_12Measurement_1_e4@plate_df %>% mutate(plate_name = 'E1')
+# all_plates_df <- do.call(rbind.fill, lapply(plate_list, function(x) {x@plate_df})) %>%
+#   mutate(concentration = factor(concentration)) %>%
+#   mutate(cell_type = factor(cell_type)) %>%
+#   dplyr::rename(strain = cell_type) %>%
+#   #dplyr::rename(batch = individual) %>%
+#   filter(sex!='FALSE') %>%
+#   mutate(strain = factor(strain, levels = c("AJ", "B6", "129", "NOD", "NZO", "CAST", "PWK", "WSB")),
+#          sex = factor(sex)) %>%
+#   select_if(function(x) !(all(is.na(x)) | all(x=="") | all(x==0))) %>% # remove empty colunns
+#   select_if(function(x) length(unique(x)) > 1) %>% # remove rows with identical values
+#   filter(concentration %in% metadata$founders_concentration_arr | concentration != 'NA') # remove missing concentrations
+```
+
+### Schema representation
+
+```{r}
+
+```
+
+### Batch effect analysis
 
 - analyze column ranges appending from harmony and consider MAD (Median Absolute Deviation)
 - understand cell x cell or plate x plate
 - consider https://rdrr.io/github/LTLA/batchelor/man/clusterMNN.html ?
 - and PCA  + https://en.wikipedia.org/wiki/Median_absolute_deviation
 
-```{r}
+### Feature engineering
 
-```
+### Modification
 
-# Customize data
+## DO
 
-- From this point forward things are not very automatic
-- The pipeline is not mature and each dataset needs special consideration and relational information.
-
-## Loading supplementary data
-
-### DO Lookups
+### Supplementary data
 
 - Supplementary tables are contained inside __./lookups__. 
 
 ```{r message=FALSE, warning=FALSE}
-doscreen_sample_lookup <- readr::read_csv("lookups/do_unfiltered/sample_lookup.csv") %>% 
+doscreen_sample_lookup <- readr::read_csv("lookups/do/sample_lookup.csv") %>% 
   clean_names() %>%
   rowwise() %>% 
   tibble::add_column(individual = NA, .after = 0) %>%
@@ -291,37 +341,16 @@ do_focus_plates_df_join <- do_focus_plates_df %>%
 stain_series_lookup <- readr::read_csv("lookups/stain_info/do_all_plates_df_stainlookup.csv")
 ```
 
-## Modification
+### Modification
 
 - Code block for unique data modification, error checking and custom considerations.
-
-## Feature engineering
-
-```{r}
-#addinggrowthquantiles
-# do_focus_plates_df_join<- do_focus_plates_df_join %>% 
-#   mutate(GrowthQuantile = ifelse(
-#     viable_per %in% (0:250000), "slow",
-#     ifelse(viable_per %in% (250000:500000), "med_slow",
-#     ifelse(viable_per %in% 500000:1000000, "med_high",
-#     ifelse(viable_per %in% 1000000:10000000, "high", "NONE")))
-#     ))
-```
-
-## Error proofing
-
-- use this as plate class method?
-
-### DO
 
 ```{r}
 # remove 0.5 concentrations in DO
 do_focus_plates_df_join<-do_focus_plates_df_join[!(do_focus_plates_df_join$concentration==0.5),]
 ```
 
----
-
-# Schema representation
+### Schema representation
 
 The following table shows counts for each individual's strain and sex along with the sample plate location. This will include some of the following - sex, plate, concentration, and strain (founders only).
 
@@ -337,7 +366,7 @@ schema_construction <- do_focus_plates_df_join %>%
   arrange(plate) %>%
   mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
 
-DT::datatable(schema_construction, rownames=FALSE, caption="Concentration frequencies by sex and experiment (plate)")
+DT::datatable(schema_construction, rownames=FALSE, caption="Concentration frequencies by sex and group (named plate)")
 ```
 
 - __Total individuals in harmony output__ `r length(unique(do_focus_plates_df_join$individual))`
@@ -363,10 +392,10 @@ schema_construction_wells <- do_focus_plates_df_join %>%
   #arrange(series)# %>%
   #mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
 
-DT::datatable(schema_construction_wells, rownames=FALSE, caption="Individual concentration frequencies")
+DT::datatable(schema_construction_wells, rownames=FALSE, caption="Concentration counts by run, group, and sex")
 ```
 
-### QA Technical Replicates
+### Replicates QA
 
 ```{r echo=FALSE, results='hide',message=FALSE}
 a1_individuals<-do_focus_plates_df_join[ which(do_focus_plates_df_join$plate=='A1'), ]$individual
@@ -395,10 +424,7 @@ series <- c("A1","A2","B1","B2")
 ## Explain this
 concentration_mat <-purrr::map_dfc( series,str_detect,as.character(metadata$do_concentration_arr)) %>%
     data.frame() %>%
-    t() %>% # transpose the result
-    as_tibble()
-```
-```{r}
+    t() 
 colnames(concentration_mat)  <- metadata$do_concentration_arr
 concentration_mat$count <- schema_vis$cumsum[1:4]
 
@@ -406,8 +432,22 @@ concentration_mat %>% print(n = nrow(concentration_mat))
 
 ```
 
-Proportion of A replicates `r length(prop_diff_A1A2)` different vs `r length(prop_same_A1A2)` same.
-Proportion of B replicates `r length(prop_diff_B1B2)` different vs `r length(prop_same_B1B2)` same.
+- Proportion of A replicates `r length(prop_diff_A1A2)` different vs `r length(prop_same_A1A2)` same.
+- Proportion of B replicates `r length(prop_diff_B1B2)` different vs `r length(prop_same_B1B2)` same.
+
+### Feature engineering
+
+```{r}
+#addinggrowthquantiles
+# do_focus_plates_df_join<- do_focus_plates_df_join %>% 
+#   mutate(GrowthQuantile = ifelse(
+#     viable_per %in% (0:250000), "slow",
+#     ifelse(viable_per %in% (250000:500000), "med_slow",
+#     ifelse(viable_per %in% 500000:1000000, "med_high",
+#     ifelse(viable_per %in% 1000000:10000000, "high", "NONE")))
+#     ))
+```
+
 ---
 
 # Predictive Analysis
@@ -552,6 +592,8 @@ summary(log_nuclei_number_of_objects_LL4)
 
 ### DRC boxplot example - DO
 
+- chunk turned off
+
 ```{r message=FALSE, warning=FALSE, eval=FALSE}
 p <- ggplot(
     data = do_all_plates_df, aes(x = concentration, y = nuclei_number_of_objects)
@@ -593,6 +635,7 @@ dependent_variable_analysis_dr(founders_quantal_all_plates_df,ignore, response_v
 
 # Future work
 
+- remove this at some point
 ToDo
 - nuclei cytotoxicity, mitotracker intensity, gamma-htax positive (3x3)
 - 6x6 
