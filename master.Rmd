@@ -74,11 +74,14 @@ library(stringr)
 library(drc) # dose response library
 library(ggplot2) # plots
 library(ggpubr) # ggplot extension
+library(hrbrthemes)
+library(viridis)
 library(janitor) # for clean_names() bulk column renaming
 #library(rstan)
 #library(multidplyr) # multi-core dplyr
 library(factoextra) # PCA Analysis
 library(corrplot) # PCA Analysis
+library(ggfortify) # PCA Analysis
 # library(gridExtra) # toggle with multi plotting / or use facet_wrap
 #library("GGally","parcoords") # parallel coordinates plotting
 source("scripts/harmony_utils.R")
@@ -145,15 +148,16 @@ founders_selected_dir <- "./founders_quantal"
 founders_metadata <- list(
   concentration_arr = c(0, 0.1, 0.5, 1, 2, 3, 4, 5),# in ppm
   swaps = NULL, # to be added later
-  MvF = c(2,2),
-  replicates = 4,
-  strains = 8
+  MvF = c(2,2), # 4 individuals per strain
+  replicates = 3, # replicates per well
+  strains = 8 # DO strains
 )
 
 # DO data metadata
 do_metadata <- list(
   concentration_arr = c(0, 0.01, 0.1, 0.75, 1, 1.25, 2, 5), # in ppm
-  sample_size = 250 # proposed sample size
+  sample_size = 250, # proposed sample size
+  strains = 8
 )
 # combine all
 metadata <- list(
@@ -208,7 +212,7 @@ __Explanation__
 │   │   ├── do_nuclei_counts <- <b>harmony_read_plate_2(dir = "./do_unfiltered")</b>
 │   │   │   ├── 20222_A1_2020-08-18T13-18-44_Measurement-2
 │   │   │   │   ├── Evaluation2
-│   │   │   │   │   ├── Objects_Population\ -\ Nuclei\ Selected.txt <b>(if applicable)</b>
+│   │   │   │   │   ├── Objects_Population{variable text}.txt <b>(if applicable)</b>
 │   │   │   │   │   └── PlateResults.txt
 │   │   │   │   └── indexfile.txt
 </pre>
@@ -216,11 +220,8 @@ __Explanation__
 ```{r message=FALSE, warning=FALSE, echo = FALSE}
 # point to masterdata dir
 setwd("data/discovery_invitro/")
-founders_quantal_collection <- harmony_read_plate_3(dir = "./founders_quantal")
-do_focus_collection <- harmony_read_plate_3(dir = "./do_focus")
-# temp batch effect testing code
-#test<- plate_collection_list$select_features(batch_cols = c("sex","concentration"))
-# check features
+founders_quantal_collection <- harmony_create_collection(dir = "./founders_quantal")
+do_focus_collection <- harmony_create_collection(dir = "./do_focus")
 ```
 
 ### Outstanding harmony loading issues
@@ -307,7 +308,114 @@ founders_quantal_plates_df <- founders_quantal_collection$all_plates %>%
 - analyze column ranges appending from harmony and consider MAD (Median Absolute Deviation)
 - understand cell x cell or plate x plate
 - consider https://rdrr.io/github/LTLA/batchelor/man/clusterMNN.html ?
-- and PCA  + https://en.wikipedia.org/wiki/Median_absolute_deviation
+- and PCA + https://en.wikipedia.org/wiki/Median_absolute_deviation
+
+```{r}
+# founders
+# empty till refactored
+```
+
+```{r}
+# scaling the variables
+cov_matrix <- function(df){
+  start_idx = grep("timepoint", colnames(df))+1
+  end_idx = grep("number_of_analyzed_fields", colnames(df))-1
+  s <- var(df[,start_idx:end_idx], na.rm=TRUE)
+  return (s)
+}
+
+s <- cov_matrix(do_focus_collection$all_plates)
+```
+
+```{r}
+# pca for large datasets
+randomize_pca <- function(df,rand.individual,rand.feature, dose.val){
+  
+  colnames(df) <- sub("_per_well", "", colnames(df))
+  colnames(df) <- sub("33342", "", colnames(df))
+  
+  start_idx = grep("timepoint", colnames(df)) + 1
+  end_idx = grep("number_of_analyzed_fields", colnames(df)) - 1
+  
+  random_n_plates <- df %>%
+  mutate(
+      individual = as.factor(individual),
+      run = as.factor(run),
+      concentration = as.factor(concentration)
+    ) %>%
+  na.omit %>%
+    filter(
+      individual %in% sample(levels(individual), rand.individual)
+    )
+  rownames(random_n_plates) = paste0(random_n_plates$individual," ", rownames(random_n_plates))
+  random_n_plates[,start_idx:end_idx] <- sapply(random_n_plates[,start_idx:end_idx],as.numeric)
+  df_pca <- suppressWarnings(
+    prcomp(random_n_plates[,sort(sample(c(start_idx:end_idx),rand.feature))], 
+           scale=TRUE))
+  
+p<- autoplot(df_pca, 
+         main = paste0("Dose:",as.character(dose.val)," with ",rand.individual," individuals and ",rand.feature, " features"),
+         data = random_n_plates, 
+         colour = "run", 
+         label=TRUE,
+         label.size = 2,
+         loadings = TRUE, 
+         loadings.colour = 'black',
+         loadings.label = TRUE, 
+         loadings.label.size = 3,
+         loadings.label.colour = 'black',
+         shape = FALSE
+         )
+return (list(p,random_n_plates[,sort(sample(c(start_idx:end_idx),rand.feature))]))
+}
+```
+
+```{r}
+# removing columns for st_dev
+minus_stdev <- do_focus_collection$all_plates[, -grep("std_dev", colnames(do_focus_collection$all_plates))]
+minus_stdev_mean <- do_focus_collection$all_plates[, -grep("mean", colnames(do_focus_collection$all_plates))]
+```
+
+```{r}
+#set.seed(11)
+# random concentration
+random_concentration <- sample(do_focus_collection$all_plates$concentration, 1)
+
+
+val <- randomize_pca(
+  do_focus_collection$all_plates,
+  rand.individual = 3, # num random individuals
+  rand.feature= 5, # num random features
+  dose.val = random_concentration
+  )
+val[[1]]
+# ok <- cbind(stringr::str_split_fixed(rownames(val[[2]]), " ",2),val[[2]])
+# ok  %>%
+#   ggplot( aes(x=in_focus_intensity_nucleus_alexa_488_median_std_dev, color=`1`, fill=`1`)) +
+#     geom_density(alpha=0.6) +
+#     scale_fill_viridis(discrete=TRUE) +
+#     scale_color_viridis(discrete=TRUE) +
+#     #geom_text( data=annot, aes(x=x, y=y, label=text, color=text), hjust=0, size=4.5) +
+#     theme_ipsum() +
+#     theme(
+#       legend.position="none"
+#     ) +
+#     ylab("") +
+#     xlab("Variable density per run")
+```
+
+
+```{r}
+test_0.1 <- suppressWarnings(do_focus_collection$effect_analysis(
+  group_vars = c("dir","run"), reduce = c("concentration",0.1)
+  ))
+test_0.1 <- test_0.1 %>% filter_at(vars(run),any_vars(!is.na(.)))
+
+# check run effects
+# row/column effects
+# 
+
+```
 
 ### Feature engineering
 
@@ -321,14 +429,14 @@ founders_quantal_plates_df <- founders_quantal_collection$all_plates %>%
 
 ```{r message=FALSE, warning=FALSE}
 doscreen_sample_lookup <- readr::read_csv("lookups/do/sample_lookup.csv") %>% 
-  clean_names() %>%
-  rowwise() %>% 
-  tibble::add_column(individual = NA, .after = 0) %>%
-  mutate(sample_count = 3 - sum(is.na(c(sample_1, sample_2, sample_3)))) %>%
-  filter(sample_count > 0) %>% 
-  mutate(sample_1 = as.character(sample_1)) %>% 
-  mutate(sample_2 = as.character(sample_2)) %>% 
-  mutate(sample_3 = as.character(sample_3)) 
+   clean_names() %>%
+   rowwise() %>% 
+   tibble::add_column(individual = NA, .after = 0) %>%
+   mutate(sample_count = 3 - sum(is.na(c(sample_1, sample_2, sample_3)))) %>%
+  # filter(sample_count > 0)# %>% 
+  mutate(sample_1 = as.character(sample_1)) %>%
+  mutate(sample_2 = as.character(sample_2)) %>%
+  mutate(sample_3 = as.character(sample_3))
 
 # duplicate individuals found!
 doscreen_sample_pivot <- tidyr::pivot_longer(doscreen_sample_lookup[,c("climb_id","sex","sample_1","sample_2","sample_3")], cols=c(sample_1, sample_2, sample_3), names_to = "sample_num", values_to = "individual") %>%
@@ -364,6 +472,16 @@ schema_construction <- do_focus_plates_df_join %>%
   dplyr::count(plate, sex, concentration) %>% # may be plate_id
   tidyr::spread(concentration, n, fill = 0) %>%
   arrange(plate) %>%
+  mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
+
+DT::datatable(schema_construction, rownames=FALSE, caption="Concentration frequencies by sex and group (named plate)")
+```
+
+```{r}
+schema_construction <- do_focus_plates_df_join %>%
+  dplyr::count(individual, sex,plate, concentration) %>% # may be plate_id
+  tidyr::spread(concentration, n, fill = 0) %>%
+  arrange(individual) %>%
   mutate(cumsum = `0`+`0.01`+`0.1`+`0.75`+`1`+`1.25`+`2`+`5`) # sum rows by sex and concentration
 
 DT::datatable(schema_construction, rownames=FALSE, caption="Concentration frequencies by sex and group (named plate)")
@@ -446,6 +564,11 @@ concentration_mat %>% print(n = nrow(concentration_mat))
 #     ifelse(viable_per %in% 500000:1000000, "med_high",
 #     ifelse(viable_per %in% 1000000:10000000, "high", "NONE")))
 #     ))
+```
+
+### Batch effect analysis
+
+```{r}
 ```
 
 ---
