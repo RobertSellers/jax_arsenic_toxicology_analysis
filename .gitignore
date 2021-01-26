@@ -1,3 +1,6 @@
+# cache system
+temp_files/*.RData
+
 # Preserve data dir structure but don't version data itself
 data/discovery_invitro/*
 # data/discovery_invitro/.gitkeep

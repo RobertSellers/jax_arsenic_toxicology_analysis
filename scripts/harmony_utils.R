@@ -138,100 +138,107 @@ summary.plate_collection <- function(obj){
 
 harmony_create_collection <- function(dir){
   
-  start.time <- Sys.time()
-  
-  if (!dir.exists(dir)){
-    stop("directory parameter not found")
-  }
-  
-  # comprehensive plate list
-  temp_list <- list()
-  i <- 1 # for progress 
-  child_dir <- list.dirs(path = dir, full.names = TRUE, recursive = FALSE)
-  # construct load list
-  # takes last evaluation found
-  for (child in child_dir){
-    
-    # file naming / loop through available evaluations
-    evaluations <- list.dirs(path = child, full.names = TRUE, recursive = TRUE)
-    file_list <- unlist(strsplit(evaluations, "/"))
-    e <- as.character(sub('.*(?=.{1}$)', '',file_list[7], perl=T))
-    plate_obj_name <- paste0('d',sub(" ", "_", gsub('\\-', '',sub("/","__",paste0(file_list[3])))),"_e",e)
-    
-    cur_path <- file.path(dir,file_list[3])
-    
-    ###### INDEX FILE#######
-    index_file <- file.path(cur_path, "indexfile.txt")
-    
-    if(file.exists(index_file)){
-      
-      idx_df <- read_tsv(index_file) %>%
-        select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-        clean_names() %>% # removes spaces and bad characters for underscores
-        mutate(channel_name = tolower(gsub("[[:punct:][:blank:]]", "_", channel_name)),
-               dir = plate_obj_name)
-      
-      # split dataframes based on stain value
-      #idx_df_split <- split(idx_df, idx_df$channel_name)
-    }else{
-      #nothing right now
-      stop('Index data not loaded')
+    # look for r data
+    if (file.exists(paste0("../../temp_files/",dir,'.RData'))){
+      cat(paste0("\nLoading plate collection from temp_files"))
+      plate_collection <- readRDS(paste0("../../temp_files/",dir,'.RData'))
+    } else { 
+        start.time <- Sys.time()
+
+        if (!dir.exists(dir)){
+          stop("directory parameter not found")
+        }
+        
+        # comprehensive plate list
+        temp_list <- list()
+        i <- 1 # for progress 
+        child_dir <- list.dirs(path = dir, full.names = TRUE, recursive = FALSE)
+        # construct load list
+        # takes last evaluation found
+        for (child in child_dir){
+          
+          # file naming / loop through available evaluations
+          evaluations <- list.dirs(path = child, full.names = TRUE, recursive = TRUE)
+          file_list <- unlist(strsplit(evaluations, "/"))
+          e <- as.character(sub('.*(?=.{1}$)', '',file_list[7], perl=T))
+          plate_obj_name <- paste0('d',sub(" ", "_", gsub('\\-', '',sub("/","__",paste0(file_list[3])))),"_e",e)
+          
+          cur_path <- file.path(dir,file_list[3])
+          
+          ###### INDEX FILE#######
+          index_file <- file.path(cur_path, "indexfile.txt")
+          
+          if(file.exists(index_file)){
+            
+            idx_df <- read_tsv(index_file) %>%
+              select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
+              clean_names() %>% # removes spaces and bad characters for underscores
+              mutate(channel_name = tolower(gsub("[[:punct:][:blank:]]", "_", channel_name)),
+                    dir = plate_obj_name)
+            
+            # split dataframes based on stain value
+            #idx_df_split <- split(idx_df, idx_df$channel_name)
+          }else{
+            #nothing right now
+            stop('Index data not loaded')
+          }
+          
+          # ###### PLATE FILE#######
+          plate_file <- file.path(cur_path, paste0("Evaluation", e), "PlateResults.txt")
+          
+          if(file.exists(plate_file)){
+            
+            # handle metadata for plate header
+            plate_header_raw <- readLines(plate_file,n = 8)
+            split_header <- strsplit(plate_header_raw, split="\t")
+            metadata_df <- as.data.frame(t(do.call(rbind,split_header[c(1:6)]))) %>%
+              row_to_names(row_number = 1)
+            
+            plate_df <- read_tsv(plate_file,skip=8) %>%
+              select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
+              clean_names() %>%# removes spaces and bad characters for underscores
+              mutate(dir = plate_obj_name)
+            plate_df[is.nan(plate_df)] <- NA #change NaN to NA
+            
+          }else{
+            stop('Plate data not loaded')
+          }
+          
+          # ###### CELLS FILE#######
+          #cells_file <- file.path(cur_path, paste0("Evaluation", e), "Objects_Population - Nuclei Selected.txt")
+          cells_file <- list.files(file.path(cur_path, paste0("Evaluation", e)), full.names = TRUE, pattern = "Objects_Population")[1]
+          if(file.exists(cells_file)){
+            
+            # read file header
+            cells_header_raw <- readLines(cells_file, n = 9)
+            split_header <- strsplit(cells_header_raw, split="\t")
+            metadata_df <- as.data.frame(t(do.call(rbind,split_header[c(1:6)]))) %>%
+              row_to_names(row_number = 1)
+            # read file data
+            cell_df <- read_tsv(cells_file,skip=9) %>%
+              select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
+              clean_names() %>%# removes spaces and bad characters for underscores
+              mutate(plate_obj_name = plate_obj_name)
+          }else{
+            warning('Cells data not loaded')
+            cells_header <- ''
+            cell_df <- data.frame()
+          }
+          
+          new_plate_class <- plate_class(idx_df, plate_df,cell_df,metadata_df,dir)
+          # add plate object to list
+          len_list <- length(temp_list) + 1
+          temp_list[[plate_obj_name]] <- new_plate_class
+        }
+        plate_collection <- plate_collection_class(temp_list)
+        
+        end.time <- Sys.time()
+        time.taken <- end.time - start.time
+        cat(paste0("\nLoad Time:",time.taken))
+        cat(paste0("\nSaving plate collection to temp_files"))
+        saveRDS(plate_collection, paste0("../../temp_files/",dir,'.RData'))
     }
-    
-    # ###### PLATE FILE#######
-    plate_file <- file.path(cur_path, paste0("Evaluation", e), "PlateResults.txt")
-    
-    if(file.exists(plate_file)){
-      
-      # handle metadata for plate header
-      plate_header_raw <- readLines(plate_file,n = 8)
-      split_header <- strsplit(plate_header_raw, split="\t")
-      metadata_df <- as.data.frame(t(do.call(rbind,split_header[c(1:6)]))) %>%
-        row_to_names(row_number = 1)
-      
-      plate_df <- read_tsv(plate_file,skip=8) %>%
-        select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-        clean_names() %>%# removes spaces and bad characters for underscores
-        mutate(dir = plate_obj_name)
-      plate_df[is.nan(plate_df)] <- NA #change NaN to NA
-      
-    }else{
-      stop('Plate data not loaded')
-    }
-    
-    # ###### CELLS FILE#######
-    #cells_file <- file.path(cur_path, paste0("Evaluation", e), "Objects_Population - Nuclei Selected.txt")
-    cells_file <- list.files(file.path(cur_path, paste0("Evaluation", e)), full.names = TRUE, pattern = "Objects_Population")[1]
-    if(file.exists(cells_file)){
-      
-      # read file header
-      cells_header_raw <- readLines(cells_file, n = 9)
-      split_header <- strsplit(cells_header_raw, split="\t")
-      metadata_df <- as.data.frame(t(do.call(rbind,split_header[c(1:6)]))) %>%
-        row_to_names(row_number = 1)
-      # read file data
-      cell_df <- read_tsv(cells_file,skip=9) %>%
-        select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-        clean_names() %>%# removes spaces and bad characters for underscores
-        mutate(plate_obj_name = plate_obj_name)
-    }else{
-      warning('Cells data not loaded')
-      cells_header <- ''
-      cell_df <- data.frame()
-    }
-    
-    new_plate_class <- plate_class(idx_df, plate_df,cell_df,metadata_df,dir)
-    # add plate object to list
-    len_list <- length(temp_list) + 1
-    temp_list[[plate_obj_name]] <- new_plate_class
-  }
-  plate_collection <- plate_collection_class(temp_list)
-  
-  end.time <- Sys.time()
-  time.taken <- end.time - start.time
-  cat(paste0("\nLoad Time:",time.taken))
-  
-  return(plate_collection)
+    return (plate_collection)
 }
 
 #(value - medianzeroval) / madzeroval*1.4826
