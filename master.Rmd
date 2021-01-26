@@ -39,7 +39,7 @@ output:
 
 _Genetic analysis in the context of a quantitative environmental perturbation will reveal multiple, novel, and diverse biochemical networks that respond to chemical exposure._
 
-## Project Aims
+## Project aims
 
 (__Aim 1__) Study design evaluation / statistical methods development
 - Sample size determination, GxE (qtl?) mapping, hypothesis formulation
@@ -47,7 +47,7 @@ _Genetic analysis in the context of a quantitative environmental perturbation wi
 - Omics data pathways analysis (TBD)
 - Subsequent animal / cell-line validation (TBD)
 
- (__Aim 2__) In Vitro Analysis
+ (__Aim 2__) In vitro Analysis
 - Arsenic exposure in primary cell cultures
 - Accumulate physiologically informative cellular features / phenotypes in 3 main categories: 
   - cytotoxicity
@@ -55,7 +55,7 @@ _Genetic analysis in the context of a quantitative environmental perturbation wi
   - oxidative stress
 - Identify genetic factors of susceptibility and resistance (i.e. whole organism response and/or discovered molecular pathways)
 
-(__Aim 3__) In Vivo Renal
+(__Aim 3__) In vivo - kidney molecular profiling
 - TBD
 
 ---
@@ -76,6 +76,7 @@ library(ggplot2) # plots
 library(ggpubr) # ggplot extension
 library(hrbrthemes)
 library(viridis)
+require(cowplot) # multiplot library
 library(janitor) # for clean_names() bulk column renaming
 #library(rstan)
 #library(multidplyr) # multi-core dplyr
@@ -87,19 +88,63 @@ library(ggfortify) # PCA Analysis
 source("scripts/harmony_utils.R")
 source("scripts/tidy_utils.R")
 source("scripts/var_analysis.R")
+library(png) # figure sourcing
+library(grid) # figure sourcing
+library(gridExtra) # figure sourcing
 ```
 
 ---
 
-# Analysis metadata and parameters
+# Experimental parameters
 
-## Aim 2: In Vitro Imagery Analysis
+## Aim 2: In vitro imagery analysis 
 
-### Outstanding issues
+### Series Metadata (Founders vs DO)
 
-1. OMERO data analysis may be presented in lieu of or complementary to Harmony and is not currently handled.
-2. 3 explanatory categories are represented via 3 applied stains. A data-driven justification is not currently available.
-3. Founders mice were studied alongside DO mice for the In Vitro portion of data development
+```{r}
+# Founders data metadata
+founders_metadata <- list(
+  concentration_arr = c(0, 0.1, 0.5, 1, 2, 3, 4, 5),# in ppm
+  swaps = NULL, # to be added later
+  MvF = c(2,2), # 4 individuals per strain
+  replicates = 3, # replicates per well
+  strains = 8 # DO strains
+)
+
+# DO data metadata
+do_metadata <- list(
+  concentration_arr = c(0, 0.01, 0.1, 0.75, 1, 1.25, 2, 5), # in ppm
+  sample_size = 250, # proposed sample size
+  strains = 8
+)
+# combine all
+metadata <- list(
+  exposure_to_labeling_duration = 24, #hours from culturing to image ready state
+  stains_df = data.frame(
+  "stain" = c("mitotracker","h2ax","hoescht"),
+  "phenotype_targets" = c("cytotoxicity","genotoxicity","oxidative_stress")
+  ),
+  founders_strains = c("AJ", "B6", "129", "NOD", "NZO", "CAST", "PWK", "WSB"),
+  exposure_limit = 0.01, #in ppm
+  founders_metadata = founders_metadata,
+  do_metadata = do_metadata
+)
+rm(founders_metadata); rm(do_metadata)
+```
+
+__Global Sample Parameters__  
+  
+  - exposure to labeling duration (in hours): `r metadata$exposure_to_labeling_duration`
+
+__Schema definitions__
+
+```{r}
+img1 <-  rasterGrob(as.raster(readPNG("figures/founders_schema.png")), interpolate = FALSE)
+img2 <-  rasterGrob(as.raster(readPNG("figures/do_schema.png")), interpolate = FALSE)
+grid.arrange(img1, img2, ncol = 2)
+rm(img1);rm(img2)
+```
+## Aim 2: In vitro Imagery Analysis
 
 ### Imagery dataset selection
 
@@ -137,68 +182,8 @@ founders_selected_dir <- "./founders_quantal"
 - __<span style="color:red; font-size:20px;">`r paste(sub('./', '', founders_selected_dir))`</span>__ selected
 - __<span style="color:red; font-size:20px;">`r paste(sub('./', '', do_selected_dir))`</span>__ selected
 
-# Experimental Parameters
 
-## Aim 2: In Vitro Imagery Analysis
-
-### Series Metadata (Founders vs DO)
-
-```{r}
-# Founders data metadata
-founders_metadata <- list(
-  concentration_arr = c(0, 0.1, 0.5, 1, 2, 3, 4, 5),# in ppm
-  swaps = NULL, # to be added later
-  MvF = c(2,2), # 4 individuals per strain
-  replicates = 3, # replicates per well
-  strains = 8 # DO strains
-)
-
-# DO data metadata
-do_metadata <- list(
-  concentration_arr = c(0, 0.01, 0.1, 0.75, 1, 1.25, 2, 5), # in ppm
-  sample_size = 250, # proposed sample size
-  strains = 8
-)
-# combine all
-metadata <- list(
-  exposure_to_labeling_duration = 24, #hours from culturing to image ready state
-  stains_df = data.frame(
-  "stain" = c("mitotracker","h2ax","hoescht"),
-  "phenotype_targets" = c("cytotoxicity","genotoxicity","oxidative_stress")
-  ),
-  founders_strains = c("AJ", "B6", "129", "NOD", "NZO", "CAST", "PWK", "WSB"),
-  exposure_limit = 0.01, #in ppm
-  founders_metadata = founders_metadata,
-  do_metadata = do_metadata
-)
-rm(founders_metadata); rm(do_metadata)
-# knitr::kable(metadata$stains_df, caption="Stains applied")
-```
-
-__Global Sample Parameters__  
-  
-  - exposure to labeling duration (in hours): `r metadata$exposure_to_labeling_duration`
-
-__Founders Sample Summary__
-
-  - arsenic concentrations applied (in ppm): `r length(metadata$founders_metadata$concentration_arr)` concentrations; `r metadata$founders_metadata$concentration_arr`
-  - The sample configuration involved 2 males and 2 females from each of the 8 DO founder strains. Four individuals from each strain with three replicate wells per plate were exposed to sodium arsenite at each of the aforementioned concentrations.
-  
-__DO Sample Summary__
-
-  - arsenic concentrations applied (in ppm): `r length(metadata$do_metadata$concentration_arr)` concentrations; `r metadata$do_metadata$concentration_arr`
-  - DO screen proposed individual sample size `r length(metadata$do_metadata$sample_size)`
-
-
-## Aim 3: In Vivo Renal
-
-- Nothing yet
-
----
-
-# Data loading & tidying
-
-## Loading as custom plate objects 
+## Data loading & tidying
 
 __Explanation__
 
@@ -209,7 +194,7 @@ __Explanation__
 <pre>
 ├── data
 │   ├── discovery_invitro <- <b>setwd("data/discovery_invitro/") here!</b>
-│   │   ├── do_nuclei_counts <- <b>harmony_read_plate_2(dir = "./do_unfiltered")</b>
+│   │   ├── do_focus <- <b>harmony_read_plate_2(dir = "./do_focus")</b>
 │   │   │   ├── 20222_A1_2020-08-18T13-18-44_Measurement-2
 │   │   │   │   ├── Evaluation2
 │   │   │   │   │   ├── Objects_Population{variable text}.txt <b>(if applicable)</b>
@@ -220,70 +205,41 @@ __Explanation__
 ```{r message=FALSE, warning=FALSE, echo = FALSE}
 # point to masterdata dir
 setwd("data/discovery_invitro/")
-founders_quantal_collection <- harmony_create_collection(dir = "./founders_quantal")
-do_focus_collection <- harmony_create_collection(dir = "./do_focus")
-```
-
-### Outstanding harmony loading issues
-
-- Index file correctly identifies available stains as ___channel_name___, however no data is available for mapping unique features to columns inside the plate and cell datasets. This data is ad-hoc requested and manually joined per lookup tables (see do_all_plates_df_stainlookup.csv as an example).
-- Harmony output currently in an unwieldy state and being loaded agnostically as "plates"
-- Index file contains URLs to imagery and is potentially available for additional image analysis.
-
-## Extract the master plate data frames
-
-- Reads amalgamated data.frame from _harmony_read_plate's_ returned list object's constituent plate data and metadata.
-- Last 2 commands show how to extract the metadata for all plates
-
-```{r}
-do_focus_plates_df <- do_focus_collection$all_plates %>%
-  tidyr::replace_na(list(concentration = 999)) %>% # change NA to 999 for ease of qa
-  mutate(concentration = factor(concentration))
-
-founders_quantal_plates_df <- founders_quantal_collection$all_plates %>%
-  tidyr::replace_na(list(concentration = 999)) %>% # change NA to 999 for ease of qa
-  mutate(concentration = factor(concentration))
-
-# contains appended headers from each PlateResults.txt
-#do_focus_collection$metadata
-#founders_quantal_collection$metadata
+founders_quantal_collection <- harmony_create_collection(dir = founders_selected_dir) 
+do_focus_collection <- harmony_create_collection(dir = do_selected_dir)
+rm(do_selected_dir);rm(founders_selected_dir)
 ```
 
 # Data Treatments
 
-## Founders
-### Supplementary data
-
-- none incorporated so far
-- ought to have its own top level section?
-
-### Modification
-
-- need to refactor
+## Founders modification
 
 ```{r}
-# plate_list$dFounders_A1_Whole_New__20200115T13_25_19Measurement_1_e1@plate_df <-
-# plate_list$dFounders_A1_Whole_New__20200115T13_25_19Measurement_1_e1@plate_df %>%
-#   filter(!is.na(cell_type)) %>% 
-#   mutate(plate_name = 'A1')
-# 
-# plate_list$dFounders_B1_Whole__20200103T10_34_56Measurement_1_e3@plate_df <- plate_list$dFounders_B1_Whole__20200103T10_34_56Measurement_1_e3@plate_df %>%
-#   filter(mouse != "PWK_2F") %>% mutate(plate_name = 'B1')
-# 
-# plate_list$dFounders_AA1__20200113T14_27_40Measurement_1_e3@plate_df<-plate_list$dFounders_AA1__20200113T14_27_40Measurement_1_e3@plate_df %>% mutate(plate_name = 'AA1')
-# 
-# plate_list$dFounders_BB1__20200114T09_14_08Measurement_1_e3@plate_df<-plate_list$dFounders_BB1__20200114T09_14_08Measurement_1_e3@plate_df %>% mutate(plate_name = 'BB1')
-# 
-# plate_list$dFounders_C1_Whole__20191230T10_37_26Measurement_1_e2@plate_df<-plate_list$dFounders_C1_Whole__20191230T10_37_26Measurement_1_e2@plate_df %>% mutate(plate_name = 'C1')
-# 
-# plate_list$dFounders_CC1__20200115T09_21_08Measurement_1_e3@plate_df <- plate_list$dFounders_CC1__20200115T09_21_08Measurement_1_e3@plate_df %>% mutate(plate_name = 'CC1')
-# 
-# plate_list$dFounders_D1_Whole__20191230T13_52_41Measurement_1_e2@plate_df<-plate_list$dFounders_D1_Whole__20191230T13_52_41Measurement_1_e2@plate_df %>% mutate(plate_name = 'D1') %>% 
-#   mutate(sex = "F")
-# 
-# plate_list$dFounders_DD1__20200114T13_08_38Measurement_1_e3@plate_df<-plate_list$dFounders_DD1__20200114T13_08_38Measurement_1_e3@plate_df %>% mutate(plate_name = 'DD1')
-# 
-# plate_list$dFounders_E1_Whole__20200102T08_52_12Measurement_1_e4@plate_df <- plate_list$dFounders_E1_Whole__20200102T08_52_12Measurement_1_e4@plate_df %>% mutate(plate_name = 'E1')
+founders_quantal_collection$all_plates <- founders_quantal_collection$all_plates %>%
+  tidyr::replace_na(list(concentration = 999)) %>% 
+  distinct() %>% # just in case
+  filter(!is.na(cell_type)) %>%
+  dplyr::rename(strain = cell_type) %>%
+  mutate(concentration = factor(concentration),
+         strain = factor(strain),
+         sex = factor(sex),
+         plate_name = case_when(
+           dir=="dFounders_A1_Whole_New__20200115T13_25_19Measurement_1_e1" ~ "A1",
+           dir=="dFounders_B1_Whole__20200103T10_34_56Measurement_1_e3" ~ "B1",
+           dir=="dFounders_AA1__20200113T14_27_40Measurement_1_e3" ~ "AA1",
+           dir=="dFounders_BB1__20200114T09_14_08Measurement_1_e3" ~ "BB1",
+           dir=="dFounders_CC1__20200115T09_21_08Measurement_1_e3" ~ "CC1",
+           dir=="dFounders_D1_Whole__20191230T13_52_41Measurement_1_e2" ~ "D1",
+           dir=="dFounders_DD1__20200114T13_08_38Measurement_1_e3" ~ "DD1",
+           dir=="dFounders_E1_Whole__20200102T08_52_12Measurement_1_e4" ~ "E1",
+           dir=="dFounders_C1_Whole__20191230T10_37_26Measurement_1_e2" ~ "C1"
+         )) %>%
+  filter((plate_name == 'B1' & mouse != "PWK_2F") | plate_name != 'B1') %>%
+  mutate(sex = case_when(
+    plate_name == 'D1' ~ "F",
+    TRUE ~ as.character(sex)
+  ))
+
 # all_plates_df <- do.call(rbind.fill, lapply(plate_list, function(x) {x@plate_df})) %>%
 #   mutate(concentration = factor(concentration)) %>%
 #   mutate(cell_type = factor(cell_type)) %>%
@@ -297,135 +253,7 @@ founders_quantal_plates_df <- founders_quantal_collection$all_plates %>%
 #   filter(concentration %in% metadata$founders_concentration_arr | concentration != 'NA') # remove missing concentrations
 ```
 
-### Schema representation
-
-```{r}
-
-```
-
-### Batch effect analysis
-
-- analyze column ranges appending from harmony and consider MAD (Median Absolute Deviation)
-- understand cell x cell or plate x plate
-- consider https://rdrr.io/github/LTLA/batchelor/man/clusterMNN.html ?
-- and PCA + https://en.wikipedia.org/wiki/Median_absolute_deviation
-
-```{r}
-# founders
-# empty till refactored
-```
-
-```{r}
-# scaling the variables
-cov_matrix <- function(df){
-  start_idx = grep("timepoint", colnames(df))+1
-  end_idx = grep("number_of_analyzed_fields", colnames(df))-1
-  s <- var(df[,start_idx:end_idx], na.rm=TRUE)
-  return (s)
-}
-
-s <- cov_matrix(do_focus_collection$all_plates)
-```
-
-```{r}
-# pca for large datasets
-randomize_pca <- function(df,rand.individual,rand.feature, dose.val){
-  
-  colnames(df) <- sub("_per_well", "", colnames(df))
-  colnames(df) <- sub("33342", "", colnames(df))
-  
-  start_idx = grep("timepoint", colnames(df)) + 1
-  end_idx = grep("number_of_analyzed_fields", colnames(df)) - 1
-  
-  random_n_plates <- df %>%
-  mutate(
-      individual = as.factor(individual),
-      run = as.factor(run),
-      concentration = as.factor(concentration)
-    ) %>%
-  na.omit %>%
-    filter(
-      individual %in% sample(levels(individual), rand.individual)
-    )
-  rownames(random_n_plates) = paste0(random_n_plates$individual," ", rownames(random_n_plates))
-  random_n_plates[,start_idx:end_idx] <- sapply(random_n_plates[,start_idx:end_idx],as.numeric)
-  df_pca <- suppressWarnings(
-    prcomp(random_n_plates[,sort(sample(c(start_idx:end_idx),rand.feature))], 
-           scale=TRUE))
-  
-p<- autoplot(df_pca, 
-         main = paste0("Dose:",as.character(dose.val)," with ",rand.individual," individuals and ",rand.feature, " features"),
-         data = random_n_plates, 
-         colour = "run", 
-         label=TRUE,
-         label.size = 2,
-         loadings = TRUE, 
-         loadings.colour = 'black',
-         loadings.label = TRUE, 
-         loadings.label.size = 3,
-         loadings.label.colour = 'black',
-         shape = FALSE
-         )
-return (list(p,random_n_plates[,sort(sample(c(start_idx:end_idx),rand.feature))]))
-}
-```
-
-```{r}
-# removing columns for st_dev
-minus_stdev <- do_focus_collection$all_plates[, -grep("std_dev", colnames(do_focus_collection$all_plates))]
-minus_stdev_mean <- do_focus_collection$all_plates[, -grep("mean", colnames(do_focus_collection$all_plates))]
-```
-
-```{r}
-#set.seed(11)
-# random concentration
-random_concentration <- sample(do_focus_collection$all_plates$concentration, 1)
-
-
-val <- randomize_pca(
-  do_focus_collection$all_plates,
-  rand.individual = 3, # num random individuals
-  rand.feature= 5, # num random features
-  dose.val = random_concentration
-  )
-val[[1]]
-# ok <- cbind(stringr::str_split_fixed(rownames(val[[2]]), " ",2),val[[2]])
-# ok  %>%
-#   ggplot( aes(x=in_focus_intensity_nucleus_alexa_488_median_std_dev, color=`1`, fill=`1`)) +
-#     geom_density(alpha=0.6) +
-#     scale_fill_viridis(discrete=TRUE) +
-#     scale_color_viridis(discrete=TRUE) +
-#     #geom_text( data=annot, aes(x=x, y=y, label=text, color=text), hjust=0, size=4.5) +
-#     theme_ipsum() +
-#     theme(
-#       legend.position="none"
-#     ) +
-#     ylab("") +
-#     xlab("Variable density per run")
-```
-
-
-```{r}
-test_0.1 <- suppressWarnings(do_focus_collection$effect_analysis(
-  group_vars = c("dir","run"), reduce = c("concentration",0.1)
-  ))
-test_0.1 <- test_0.1 %>% filter_at(vars(run),any_vars(!is.na(.)))
-
-# check run effects
-# row/column effects
-# 
-
-```
-
-### Feature engineering
-
-### Modification
-
-## DO
-
-### Supplementary data
-
-- Supplementary tables are contained inside __./lookups__. 
+## DO modification
 
 ```{r message=FALSE, warning=FALSE}
 doscreen_sample_lookup <- readr::read_csv("lookups/do/sample_lookup.csv") %>% 
@@ -443,20 +271,245 @@ doscreen_sample_pivot <- tidyr::pivot_longer(doscreen_sample_lookup[,c("climb_id
   tidyr::drop_na(individual) %>% 
   distinct(individual, .keep_all = TRUE) # removing duplicate error in lookup csv
 
-do_focus_plates_df_join <- do_focus_plates_df %>%
+do_focus_plates_df_join <- do_focus_collection$all_plates %>%
   left_join(doscreen_sample_pivot, by = "individual") 
 
 stain_series_lookup <- readr::read_csv("lookups/stain_info/do_all_plates_df_stainlookup.csv")
-```
 
-### Modification
-
-- Code block for unique data modification, error checking and custom considerations.
-
-```{r}
-# remove 0.5 concentrations in DO
 do_focus_plates_df_join<-do_focus_plates_df_join[!(do_focus_plates_df_join$concentration==0.5),]
 ```
+
+### Resampling / downsampling for analytics
+
+```{r}
+# scaling the variables
+cov_matrix <- function(df){
+  start_idx = grep("timepoint", colnames(df))+1
+  end_idx = grep("number_of_analyzed_fields", colnames(df))-1
+  s <- var(df[,start_idx:end_idx], na.rm=TRUE)
+  return (s)
+}
+
+#s <- cov_matrix(do_focus_collection$all_plates)
+
+downsample_df_v1 <- function(df, num_features, num_individuals,concentration){
+    df <- df[df$concentration == concentration, ] 
+  
+    #colnames(df) <- sub("_per_well", "", colnames(df))
+    #colnames(df) <- sub("33342", "", colnames(df))
+    
+    start_idx = grep("timepoint", colnames(df)) + 1
+    end_idx = grep("number_of_analyzed_fields", colnames(df)) - 1
+    
+    find_n_features <- sample(colnames(df[,start_idx:end_idx]),num_features)
+    
+    random_n_plates <- df %>%
+    mutate(
+        individual = as.factor(individual),
+        run = as.factor(run),
+        concentration = as.factor(concentration)
+      ) %>%
+    na.omit %>%
+      filter(
+        individual %in% sample(unique(levels(individual)), num_individuals)
+      )
+    cat(paste(unique(random_n_plates$individual),collapse=" "))
+    
+    rownames(random_n_plates) = paste0(random_n_plates$individual,"|", rownames(random_n_plates))
+    random_n_plates[,start_idx:end_idx] <- sapply(random_n_plates[,start_idx:end_idx],as.numeric)
+
+    columns_of_interest <- c(c("run","individual","concentration"), find_n_features)
+    df <- subset(random_n_plates, select=columns_of_interest)
+    return (df)
+}
+
+pca_v1 <- function(df){
+  # Identify numeric columns
+    num_cols <- unlist(lapply(df, is.numeric))
+    
+    pca_data <- suppressWarnings(
+      prcomp(df[ , num_cols], scale=TRUE)
+      )
+    autoplot(pca_data, 
+        main = paste0("As Concentration:",as.character(unique(df$concentration))," ppm"),
+       data = df, 
+       colour = "run", 
+       label=TRUE,
+       label.size = 2,
+       loadings = TRUE, 
+       loadings.colour = 'black',
+       loadings.label = TRUE, 
+       loadings.label.size = 3,
+       loadings.label.colour = 'black',
+       shape = FALSE
+       )
+}
+
+# individual density plots for variance
+density_v1 <- function(df){
+
+  num_cols <- unlist(lapply(df, is.numeric))
+  features <- colnames(df[ , num_cols] )
+  u_concentration <- as.character(unique(df$concentration))
+  
+  p <- lapply(features, function(col){
+    ggplot(df, 
+      aes_string(x=col,group="run", color = "run", fill = "run")) +
+      geom_density(alpha=0.6) +
+      scale_fill_viridis(discrete=TRUE) +
+      scale_color_viridis(discrete=TRUE) +
+      theme_ipsum() +
+      panel_border()
+    })
+      
+  # now add the title
+title <- ggdraw() + 
+  draw_label(
+    paste0("Densities per Run for As ",u_concentration," ppm"),
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+  legend <- get_legend(
+    # create some space to the left of the legend
+    p[[1]]+ theme(legend.box.margin = margin(0, 0, 0, 12))
+  )
+  row1 <- plot_grid(
+    p[[1]] + theme(legend.position="none"), 
+    p[[2]] + theme(legend.position="none"))
+  row2 <- plot_grid(
+    p[[3]] + theme(legend.position="none"), 
+    p[[4]] + theme(legend.position="none"))
+  p_grid <- plot_grid(
+    title,row1,row2, nrow=3,rel_heights=c(0.1,0.5,0.5))
+  
+  plot_grid(p_grid)
+}
+
+# DO boxplot
+# p <- ggplot(
+#     data = do_all_plates_df, aes(x = concentration, y = nuclei_number_of_objects)
+#   ) +
+#   #geom_violin() +
+#   labs(
+#     x = "Arsenic Drug Concentration", 
+#     y = "Number of Objects",
+#     title = 'Dose-Response Boxplot',
+#     subtitle = 'log_nuclei_number_of_objects all_plates_df'
+#     ) +
+#   ylim(0, NA) + 
+#   #stat_summary(fun.y=mean, geom="point", shape=23, size=2) + 
+#   #stat_summary(fun.y=median, geom="point", size=2, color="red")
+#   geom_boxplot(width=0.1)
+
+# ignore <- c("plate_name","sex","mouse","individual","strain","concentration","row","column")
+# dependent_variable_analysis_dr(founders_quantal_all_plates_df,ignore, response_var='concentration')
+
+#founders_quantal
+# model_H2AX_LL_4 <- drm(h2ax_pos_in_focus ~ as.numeric(concentration), 
+#                        curveid = mouse, 
+#                        data=na.omit(founders_quantal_all_plates_df), 
+#                        fct=LL.4(), 
+#                        pmodels = c(~mouse-1, ~mouse-1, ~mouse-1, ~mouse-1)
+#                        )
+
+# check this https://www.rdocumentation.org/packages/drc/versions/2.5-12/topics/secalonic
+custom_drc <- function(df){
+  ec50s <- list()
+  num_cols <- unlist(lapply(df, is.numeric))
+  features <- colnames(df[ , num_cols] )
+  for (f in features[features != "concentration"]){
+    drm1 <- NULL
+    my_cols <- c(f,"concentration")
+    feature_subset <- df %>% 
+      dplyr::select(one_of(my_cols))%>% 
+      tidyr::drop_na()
+    tryCatch(
+        {
+        drm1 <- drm(
+          formula = feature_subset,
+          na.action = na.omit,
+          #data = df,
+          fct = LL.4(names = c("Slope", "Lower Limit", "Upper Limit", "ED50"))
+        )
+        plot(drm1,
+             xlab="Concentration (ppm)",
+             ylab="Response value",
+             col="orangered",
+             type = 'all', 
+             pch=16,
+            confidence.level = 0.95,
+            main=f)
+        # feature_subset$ec50 <- summary(drm1)$coefficients[4]
+        #confint(log_nuclei_number_of_objects_LL4, level = 0.95)
+        },
+        error=function(cond) {
+          #junk plot
+          plot(1,main=f)
+        },
+        finally={
+          # generate estimates output
+          if(exists("drm1")){
+            vals <- summary(drm1)
+            ec50 <- c(f,vals$coefficients[4])
+          }else{
+            ec50 <- c(f,NA)
+          }
+          ec50s <- c(ec50s, ec50)
+        })
+  }
+  return (ec50s)
+}
+
+```
+
+
+### Applied Randomized Resample
+
+```{r}
+#set.seed(11)
+# generate random downsampled experiment
+resample_data <- downsample_df_v1(
+  df = do_focus_collection$all_plates, 
+  num_features = 4, 
+  num_individuals = 10,
+  concentration = 1)
+# PCA on experimental subset
+pca_v1(df = resample_data)
+# consider this next time https://www.biostars.org/p/400671/
+suppressWarnings(density_v1(df = resample_data))
+# add dose-response curves
+resample_data_all_concentrations <- do_focus_collection$all_plates %>% 
+  filter(individual %in% unique(resample_data$individual)) %>%
+  dplyr::select(dplyr::one_of(colnames(resample_data)))
+# get ec50 from these
+    out <- tryCatch(
+        {
+          custom_drc(resample_data_all_concentrations)
+        },
+        error=function(cond) {
+
+            # Choose a return value in case of error
+            return(NA)
+        },
+        warning=function(cond) {
+
+            # Choose a return value in case of warning
+            return(NULL)
+        })
+# x <- custom_drc(resample_data_all_concentrations)
+
+# test_0.1 <- suppressWarnings(do_focus_collection$effect_analysis(
+#   group_vars = c("dir","run"), reduce = c("concentration",0.1)
+#   ))
+# test_0.1 <- test_0.1 %>% filter_at(vars(run),any_vars(!is.na(.)))
+```
+
 
 ### Schema representation
 
@@ -493,7 +546,7 @@ DT::datatable(schema_construction, rownames=FALSE, caption="Concentration freque
 
 - __Total wells__ `r nrow(do_focus_plates_df_join)`
 
-- __Missing concentration__ `r percent(nrow(do_focus_plates_df_join[do_focus_plates_df_join$concentration == 999, ])/nrow(do_focus_plates_df))`
+- __Missing concentration__ `r percent(nrow(do_focus_plates_df_join[do_focus_plates_df_join$concentration == 999, ])/nrow(do_focus_collection$all_plates))`
 
 - __Missing plate__ `r percent(1- mean(complete.cases(do_focus_plates_df_join$run)))`
 
@@ -566,14 +619,9 @@ concentration_mat %>% print(n = nrow(concentration_mat))
 #     ))
 ```
 
-### Batch effect analysis
-
-```{r}
-```
-
 ---
 
-# Predictive Analysis
+# Placeholder analyses
 
 - the following are found and new experimental analyses
 
@@ -641,101 +689,6 @@ $$c+(d-c)exp(-exp(b(log(x)-log(e))))$$
 - https://rpubs.com/russH/378543 
 - chunk turned off
 
-```{r warning=FALSE, eval=FALSE}
-
-# founders code reproduction
-
-#founders_quantal
-model_H2AX_W2_4 <- drm(h2ax_pos_in_focus ~ as.numeric(concentration), 
-                       curveid = mouse, 
-                       data=na.omit(founders_quantal_all_plates_df), 
-                       fct=W2.4(), 
-                       pmodels = c(~mouse-1, ~mouse-1, ~mouse-1, ~mouse-1)
-                       )
-
-#founders_quantal
-model_H2AX_LL_4 <- drm(h2ax_pos_in_focus ~ as.numeric(concentration), 
-                       curveid = mouse, 
-                       data=na.omit(founders_quantal_all_plates_df), 
-                       fct=LL.4(), 
-                       pmodels = c(~mouse-1, ~mouse-1, ~mouse-1, ~mouse-1)
-                       )
-
-#founders_quantal
-model_stress_W2_4 <- drm(mito_stress_in_focus ~ as.numeric(concentration), 
-                       curveid = mouse, 
-                       data=na.omit(founders_quantal_all_plates_df), 
-                       fct=W2.4(), 
-                       pmodels = c(~mouse-1, ~mouse-1, ~mouse-1, ~mouse-1)
-                       )
-
-#founders_quantal
-model_stress_LL_4 <- drm(mito_stress_in_focus ~ as.numeric(concentration), 
-                       curveid = mouse, 
-                       data=na.omit(founders_quantal_all_plates_df), 
-                       fct=LL.4(), 
-                       pmodels = c(~mouse-1, ~mouse-1, ~mouse-1, ~mouse-1)
-                       )
-```
-
-### DRC distribution example - DO
-
-- 0.5 concentration ignored
-- chunk turned off
-
-```{r eval=FALSE}
-## Fitting a four-parameter log-logistic model
-## with user-defined parameter names
-#names_group <- c('plate_id' ,'technician')
-# do
-log_nuclei_number_of_objects_LL4 <- drm(
-  formula = nuclei_number_of_objects ~ as.numeric(concentration),
-  curveid = plate, #given plate id
-  data = do_all_plates_df[ do_all_plates_df$concentration != 0.5, ],
-  fct = LL.4(names = c("Slope", "Lower Limit", "Upper Limit", "ED50"))
-  )
-
-# example plot
-plot(log_nuclei_number_of_objects_LL4,  
-     xlab="dose response (ppm)", 
-     ylab="plate number of objects",
-     col = TRUE,
-     type = 'all',
-     #normal = TRUE,
-     #ylab = 'feature value',
-     #xttrim = FALSE,
-    confidence.level = 0.95,
-    main="example drc = Plate x Batch nuclei_number_of_objects")
-## Add points
-#plot(nuclei_number_of_objects.LL4 ,col = TRUE, add=TRUE)
-#provide the four-parameter log-logistic function
-summary(log_nuclei_number_of_objects_LL4)
-#confint(log_nuclei_number_of_objects_LL4, level = 0.95)
-```
-
-### DRC boxplot example - DO
-
-- chunk turned off
-
-```{r message=FALSE, warning=FALSE, eval=FALSE}
-p <- ggplot(
-    data = do_all_plates_df, aes(x = concentration, y = nuclei_number_of_objects)
-  ) +
-  #geom_violin() +
-  labs(
-    x = "Arsenic Drug Concentration", 
-    y = "Number of Objects",
-    title = 'Dose-Response Boxplot',
-    subtitle = 'log_nuclei_number_of_objects all_plates_df'
-    ) +
-  ylim(0, NA) + 
-  #stat_summary(fun.y=mean, geom="point", shape=23, size=2) + 
-  #stat_summary(fun.y=median, geom="point", size=2, color="red")
-  geom_boxplot(width=0.1)
-p
-ignore <- c("plate_name","sex","mouse","individual","strain","concentration","row","column")
-dependent_variable_analysis_dr(founders_quantal_all_plates_df,ignore, response_var='concentration')
-```
 
 ## Cell-line feature selection
 
@@ -756,11 +709,19 @@ dependent_variable_analysis_dr(founders_quantal_all_plates_df,ignore, response_v
 
 - map and identify genetic loci that are responsible for individual variation in susceptibility in DO mice using a novel G x E mapping strategy
 
-# Future work
+# Appendix
 
-- remove this at some point
-ToDo
+__General todos__
+
 - nuclei cytotoxicity, mitotracker intensity, gamma-htax positive (3x3)
 - 6x6 
-- PCA & DRC - analyze sources of variance
 - stan tbd - bayes vs weibull.R
+- OMERO data analysis may be presented in lieu of or complementary to Harmony and is not currently handled.
+- 3 explanatory categories are represented via 3 applied stains. A data-driven justification is not currently available.
+- Founders mice were studied alongside DO mice for the In Vitro portion of data development
+
+__Harmony__
+
+- Index file correctly identifies available stains as ___channel_name___, however no data is available for mapping unique features to columns inside the plate and cell datasets. This data is ad-hoc requested and manually joined per lookup tables (see do_all_plates_df_stainlookup.csv as an example).
+- Harmony output currently in an unwieldy state and being loaded agnostically as "plates"
+- Index file contains URLs to imagery and is potentially available for additional image analysis.
