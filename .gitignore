@@ -1,19 +1,19 @@
 # Preserve data dir structure but don't version data itself
 data/discovery_invitro/*
-data/discovery_invitro/.gitkeep
+# data/discovery_invitro/.gitkeep
 
 data/discovery_invivo*
-data/discovery_invivo/.gitkeep
+# data/discovery_invivo/.gitkeep
 
 data/omics/*
-data/omics/.gitkeep
+# data/omics/.gitkeep
 
 data/validation/*
-data/validation/.gitkeep
+# data/validation/.gitkeep
 
 # ignore data for intermediate output
 output/*
-output/.gitkeep
+# output/.gitkeep
 
 # ignore local backups (robert)
 backups/*
