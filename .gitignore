@@ -111,6 +111,7 @@ Backup[ ]of[ ]*.pages/
 Backup[ ]of[ ]*.key/
 Backup[ ]of[ ]*.numbers/
 
-# papers
+# additional local data
 
 papers/*
+figures/presentations/*
