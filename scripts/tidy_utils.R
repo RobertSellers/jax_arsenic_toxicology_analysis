@@ -12,3 +12,5 @@ percent <- function(x, digits = 2, format = "f", ...) {
 not_all_na <- function(x) any(!is.na(x))
 # for use in dplyr %>% select(where(not_any_na))
 not_any_na <- function(x) all(!is.na(x))
+
+`%notin%` <- Negate(`%in%`)

@@ -15,18 +15,6 @@ plate_class <- function(index, plate_df, cells_df, plate_metadata, plate_dir){
   
 }
 
-# working on qa for dataset
-plate_qa <- function(df){
-  #start_idx = grep("timepoint", colnames(x$all_cells)) + 1
-  #end_idx = grep("plate_obj_name", colnames(x$all_cells)) - 1
-  pct_na_df = as.data.frame(colMeans(is.na(df)))
-  pct_na_df$field <- rownames(pct_na_df)
-  rownames(pct_na_df) <- NULL
-  pct_na_df<-pct_na_df[,c(2,1)] # reorderv
-  colnames(pct_na_df)[2] <- "pct_na"
-  return(pct_na_df)
-}
-
 # defining s3
 # consult with http://adv-r.had.co.nz/OO-essentials.html if necessary
 plate_collection_class <- function(list_of_plates){
@@ -34,68 +22,15 @@ plate_collection_class <- function(list_of_plates){
   self.all_plates = do.call(rbind.fill, lapply(list_of_plates, function(x) {x$plate_df}))
   self.index = do.call(rbind.fill, lapply(list_of_plates, function(x) {x$index}))
   self.all_cells = do.call(rbind.fill, lapply(list_of_plates, function(x) {x$cells_df}))
-  self.plates_qa = plate_qa(self.all_plates)
-  
+  self.feature_df = feature_columns_analyze(self.all_plates)
+
   structure(class = "plate_collection", list(
     plates = list_of_plates,
     # data methods
     all_plates = self.all_plates,
     all_index = self.index,
     all_cells = self.all_cells,
-    plates_qa = self.plates_qa,
-    # metadata = list(
-    #   cell_data_size = nrow(self.all_cells),
-    #   plate_data_size = nrow(self.all_plates)
-    # ),
-    # extration methods
-    # selects only predictors + input batches
-    select_features = function(keep){
-      if(missing(keep)){
-        stop("No batch columns selected.")
-      }else{
-        start_idx = grep("timepoint", colnames(self.all_plates))+1
-        end_idx = grep("number_of_analyzed_fields", colnames(self.all_plates))-1
-        # takes a vector of column names
-        batch_cols <-names(self.all_plates)[(names(self.all_plates) %in% keep)]
-        return (cbind(self.all_plates[, batch_cols], #batch in front
-                      self.all_plates[,start_idx:end_idx]) #features in back
-          )
-      }
-    },
-    analyze_indexfile = function(){
-      # outputs image "completeness"
-      # create index class and add this to summary?
-      cbind(
-        count(self.all_index,"dir")[1],
-        count(self.all_index,"dir")[2]/
-          max(self.all_index$channel_id)/max(self.all_index$field)/96)
-    },
-    effect_analysis = function(group_vars, reduce){
-      start.time <- Sys.time()
-      temp <- self.all_plates
-      if(exists(reduce)){
-        temp <- temp[temp[reduce[1]] == reduce[2],]
-      }
-      start_idx = grep("timepoint", colnames(self.all_plates))+1
-      end_idx = grep("number_of_analyzed_fields", colnames(self.all_plates))-1
-      summary_df <- self.all_plates %>% 
-        #dplyr::filter_at(vars(one_of(group_vars)),any_vars(!is.na(.))) %>%
-        dplyr::group_by_at(vars(one_of(group_vars))) %>% 
-        dplyr::summarise_at(vars(start_idx:end_idx),list(
-          mean = ~ mean(as.numeric(.), na.rm = TRUE), 
-          median = ~ median(as.numeric(.), na.rm = TRUE),
-          min= ~ min(as.numeric(.), na.rm = TRUE), 
-          max= ~ max(as.numeric(.), na.rm = TRUE), 
-          sd = ~ sd(as.numeric(.), na.rm = TRUE),
-          nas = ~ sum(is.na(as.numeric(.)))
-          #,mad = ~ mad(as.numeric(.),na.rm = TRUE)
-          )
-        )
-      end.time <- Sys.time()
-      time.taken <- end.time - start.time
-      print(time.taken)
-      return (summary_df)
-    }
+    features_df = self.feature_df
   ))
 }
 
@@ -136,12 +71,16 @@ summary.plate_collection <- function(obj){
   sum(obj$all_plates$out_focus_number_of_objects,na.rm = TRUE),"\n")
 }
 
-harmony_create_collection <- function(dir){
-  
+harmony_create_collection <- function(dir, replace_cache = FALSE){
+
+  # data cache handling
+  # incomplete storage system
+  temp_data_storage <- paste0("../../temp_files/",dir,'.RData')
+
     # look for r data
-    if (file.exists(paste0("../../temp_files/",dir,'.RData'))){
+    if (file.exists(temp_data_storage)){
       cat(paste0("\nLoading plate collection from temp_files"))
-      plate_collection <- readRDS(paste0("../../temp_files/",dir,'.RData'))
+      plate_collection <- readRDS(temp_data_storage)
     } else { 
         start.time <- Sys.time()
 
@@ -219,47 +158,63 @@ harmony_create_collection <- function(dir){
               select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
               clean_names() %>%# removes spaces and bad characters for underscores
               mutate(plate_obj_name = plate_obj_name)
+            
           }else{
             warning('Cells data not loaded')
             cells_header <- ''
             cell_df <- data.frame()
           }
           
-          new_plate_class <- plate_class(idx_df, plate_df,cell_df,metadata_df,dir)
+          new_plate_class <- plate_class(idx_df, plate_df, cell_df, metadata_df, dir)
           # add plate object to list
           len_list <- length(temp_list) + 1
           temp_list[[plate_obj_name]] <- new_plate_class
         }
+        # analyze features and add to plate collection parameter class
         plate_collection <- plate_collection_class(temp_list)
         
         end.time <- Sys.time()
         time.taken <- end.time - start.time
         cat(paste0("\nLoad Time:",time.taken))
         cat(paste0("\nSaving plate collection to temp_files"))
-        saveRDS(plate_collection, paste0("../../temp_files/",dir,'.RData'))
+        saveRDS(plate_collection, temp_data_storage)
     }
     return (plate_collection)
 }
 
-#(value - medianzeroval) / madzeroval*1.4826
-# madadj<- function(dat) {
-#   dt <- dat
-#   a<- colnames(dt[,18:79])
-#   b<- colnames(dt[,c(1:4, 14:16)])
-#   borp<- data.table::melt(dt, id.vars = c("Individual", "Concentration", "Run","Plate","X","Y","Bounding Box","Field","in_focus - Object No in Nuclei", "Column", "Row","Position X [µm]", "Position Y [µm]", "Object No" ) ,
-#                           measure.vars = list(testid =  a))
-#   borp$value <- as.numeric(borp$value)
-#   #borp1<- na.omit(borp)     #if needed?
-#   borp1[, grp1 := .GRP, by=.(Individual,Column,Run,Plate,variable)]    
-#   borp1<- borp[, grp1 := .GRP, by=.(Individual,Column,Run,Plate, variable)]    
-#   ark<- borp1[,  .SD[Concentration == 0, .(medval=median(value), madval=mad(value)), by=c("Individual", "Run","Plate","Column", "variable")], by=grp1]
-#   carry<- left_join(borp1,ark[,c("grp1", "medval","madval")], by = "grp1")
-#   setnames(carry, tolower(names(carry)))
-#   newc<- carry[,`:=`(adjval = (value-medval)/madval*1.4826), by="grp1"]
-#   newmean<- newc[,`:=`(wellval = mean(adjval)), by=c("individual", "run","plate","column", "variable", "row")]
-#   newmedian<- newc[,`:=`(wellval = median(adjval)), by=c("individual", "run","plate","column", "variable", "row")]
-#   medtable<- data.table::dcast(newmedian, individual + run + plate + column + row ~ variable, value.var = "wellval")
-#   meantable<- data.table::dcast(newmean, individual + run + plate + column + row ~ variable, value.var = "wellval")
-#   medtable
-#   meantable
-# }
+feature_columns_analyze <- function(df){
+  features_df <- NULL
+  start_idx = grep("timepoint", colnames(df)) + 1
+  end_idx = grep("number_of_analyzed_fields", colnames(df)) - 1
+  for (feature in colnames(df[,start_idx:end_idx])){
+  
+  temp_feature <- df %>%
+    select_(feature)
+  f <- temp_feature[,1]
+  
+  name_ <- feature
+  total_ <- nrow(temp_feature)
+  na_count_ <- sum(is.na(f))
+  median_ <- signif(as.numeric(median(f,na.rm=TRUE)), 3)
+  max_ <- signif(as.numeric(max(f,na.rm=TRUE)), 3)
+  min_ <- signif(as.numeric(min(f,na.rm=TRUE)), 3)
+  integer_ <- testInteger(f) 
+
+  try({
+    # https://www.rdocumentation.org/packages/NCmisc/versions/1.1.6/topics/which.outlier
+     # outlier_ <- which.outlier(f, thr = 5, method = "sd", high = TRUE,low = TRUE)
+     # print(outlier_)
+    })
+  
+  features_df <- rbind(features_df, data.frame(
+    name_,
+    integer_,
+    total_,
+    na_count_,
+    median_,
+    min_,
+    max_
+  ))
+  }
+  return (features_df)
+}
