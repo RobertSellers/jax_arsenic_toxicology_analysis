@@ -1,0 +1,153 @@
+---
+title: "Founders #1 Preprocess and QA"
+author:
+- name: Robert Sellers
+  affiliation: The Jackson Laboratory
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
+abstract: |
+latex_engine: pdflatex
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    number_sections: true
+    theme: lumen
+    toc: yes
+    toc_float: yes
+    df_print: paged
+    # code_folding: "hide"
+  pdf_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pyments
+    keep_tex: yes
+    latex_engine: xelatex
+    number_sections: no
+    toc: no
+    
+---
+
+# Programming environment
+
+```{r message=FALSE}
+# contains harmony plate collection class builder
+source("scripts/harmony_utils_v2.R")
+# various add-on scripts and stats tools
+source("scripts/custom_tools.R")
+
+library(tidyverse)
+library(janitor)
+library(ggplot2) 
+library(ggpubr) # ggplot extension
+```
+
+# Load data
+
+## Build plate collection from directory
+
+```{r warning=FALSE, echo = FALSE}
+# point to parent data directory
+setwd("data/discovery_invitro/")
+selected_dir <- "./founders_quantal"
+# Warning - this currently expects a temp_files data dir 
+founders_quantal_collection <- harmony_create_collection(
+                                dir = selected_dir,
+                                overwrite = FALSE) 
+```
+
+## Data treatments
+
+```{r warning = FALSE}
+# consult https://cran.r-project.org/web/packages/janitor/vignettes/janitor.html
+founders_quantal_collection$all_plates <- founders_quantal_collection$all_plates %>%
+  rename_at(.vars = vars(ends_with("_per_well")),
+            .funs = funs(sub("[_]per_well$", "", .))) %>%
+  rename_at(.vars = vars(ends_with("_cells_cells")),
+            .funs = funs(sub("[_]cells_cells$", "cells", .))) %>%
+  rename_at(.vars = vars(contains("1_px")),
+            .funs = funs(sub("1_px", "1px", .))) %>%
+  rename_at(.vars = vars(contains("hoechst_33342")),
+          .funs = funs(sub("hoechst_33342", "hoechst", .))) %>%
+  rename_at(.vars = vars(contains("alexa_488")),
+          .funs = funs(sub("alexa_488", "alexa488", .))) %>%
+  rename_at(.vars = vars(contains("mito_tracker_deep_red")),
+          .funs = funs(sub("mito_tracker_deep_red", "mitotrackerdeepred", .))) %>%
+  rename_at(.vars = vars(contains("_number_of_objects")),
+            .funs = funs(sub("_number_of_objects", "_numberofobjects", .))) %>%
+  rename_at(.vars = vars(contains("std_dev")),
+          .funs = funs(sub("std_dev", "stdev", .))) %>%
+  rename_at(.vars = vars(contains("_pos_")),
+          .funs = funs(sub("[_]pos[_]", "_positive_", .))) %>%
+  rename_at(.vars = vars(contains("_neg_")),
+          .funs = funs(sub("[_]neg[_]", "_negative_", .))) %>%
+  rename_at(.vars = vars(contains("out_focus")),
+          .funs = funs(sub("out_focus", "outfocus", .))) %>%
+  rename_at(.vars = vars(contains("in_focus")),
+        .funs = funs(sub("in_focus", "infocus", .))) %>%
+  rename_at(.vars = vars(contains("number_of_spots")),
+      .funs = funs(sub("number_of_spots", "numberofspots", .))) %>%
+  rename_at(.vars = vars(contains("h2ax_positive")),
+      .funs = funs(sub("h2ax_positive", "h2axpositive", .))) %>%
+  rename_at(.vars = vars(contains("h2ax_negative")),
+      .funs = funs(sub("h2ax_negative", "h2axnegative", .))) %>%
+  distinct() %>% # just in case
+  dplyr::rename(
+    strain = cell_type, 
+    dose = concentration
+    ) %>%
+  mutate(
+    plate = case_when(
+           dir=="dFounders_A1_Whole_New__20200115T13_25_19Measurement_1_e1" ~ "A1",
+           dir=="dFounders_B1_Whole__20200103T10_34_56Measurement_1_e3" ~ "B1",
+           dir=="dFounders_AA1__20200113T14_27_40Measurement_1_e3" ~ "AA1",
+           dir=="dFounders_BB1__20200114T09_14_08Measurement_1_e3" ~ "BB1",
+           dir=="dFounders_CC1__20200115T09_21_08Measurement_1_e3" ~ "CC1",
+           dir=="dFounders_D1_Whole__20191230T13_52_41Measurement_1_e2" ~ "D1",
+           dir=="dFounders_DD1__20200114T13_08_38Measurement_1_e3" ~ "DD1",
+           dir=="dFounders_E1_Whole__20200102T08_52_12Measurement_1_e4" ~ "E1",
+           dir=="dFounders_C1_Whole__20191230T10_37_26Measurement_1_e2" ~ "C1"
+         )
+    ) %>%
+  filter((plate == 'B1' & mouse != "PWK_2F") | plate != 'B1') %>%
+  # remove duplicates
+  filter(mouse %notin% c("AJ_2F", "B6_2F")) %>%
+  mutate(sex = case_when(plate == 'D1' ~ "F",TRUE ~ as.character(sex))) %>%
+  # need to confirm this again on harmony
+  mutate(strain = if_else(is.na(strain) & plate == 'A1', "CAST", strain)) %>%
+  mutate(
+    strain = factor(strain),
+    sex = factor(sex),
+    dose = factor(dose))  %>% 
+  mutate(mouse = case_when(
+         mouse == 'CAST_2M' ~ "CAST_M2",
+         mouse == 'CAST_2F' ~ 'CAST_F2',
+         mouse == 'AJ_2M' ~ 'AJ_M2',
+         mouse == 'AJ_2F' ~ 'AJ_F2',
+         mouse == 'B6_2M' ~ 'B6_M2',
+         mouse == 'PWK_2F' ~ 'PWK_F2',
+         mouse == '129_2F' ~ '129_F2',
+         mouse == 'NOD_2M' ~ 'NOD_M2',
+         mouse == 'NOD_2F' ~ 'NOD_F2',
+         mouse == 'PWK_2M' ~ 'PWK_M2',
+         mouse == 'B6_2F' ~ 'B6_F2',
+         TRUE ~ mouse)
+     ) %>%
+  # reorder everything nicely
+  dplyr::select(plate,row,column,dose,strain,sex,mouse, everything())
+
+# replace metadata columns -- misaligned now due to large # of edits
+start_idx = grep("timepoint", colnames(founders_quantal_collection$all_plates)) + 1
+end_idx = grep("number_of_analyzed_fields", colnames(founders_quantal_collection$all_plates)) - 1
+founders_quantal_collection$features_df$name_ <- colnames(founders_quantal_collection$all_plates[,start_idx:end_idx])
+```
+
+## Save/overwrite RDS
+
+```{r}
+temp_data_storage <- paste0("temp_files/",selected_dir,'_processed.RData')
+saveRDS(founders_quantal_collection, temp_data_storage)
+```
+
+---
+
+- __Continue this pipeline with founders_data_transform.rmd and while using the _processed.RData_ dataset__

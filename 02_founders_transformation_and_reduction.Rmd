@@ -1,0 +1,422 @@
+---
+title: "Founders #2 Transformation and reduction"
+author:
+- name: Robert Sellers
+  affiliation: The Jackson Laboratory
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
+abstract: |
+latex_engine: pdflatex
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    number_sections: true
+    theme: lumen
+    toc: yes
+    toc_float: yes
+    df_print: paged
+    # code_folding: "hide"
+  pdf_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pyments
+    keep_tex: yes
+    latex_engine: xelatex
+    number_sections: no
+    toc: no
+    
+---
+
+# Programming environment
+
+```{r message=FALSE}
+# various add-on scripts and stats tools
+source("scripts/custom_tools.R")
+
+library(tidyverse)
+library(ggplot2) 
+library(ggpubr) # ggplot extension
+```
+
+# Load data
+
+## Load processed RDS / plate_collection data from temp_files
+
+```{r warning=FALSE, echo = FALSE}
+# point to parent data directory
+setwd("temp_files/")
+temp_data_storage <- "founders_quantal_processed.RData"
+founders_quantal_collection <- readRDS(temp_data_storage)
+```
+
+# Data source construction
+
+```{r}
+retrieve_feature_df <- function(data, covariates){
+  start_idx = grep("timepoint", colnames(founders_quantal_collection$all_plates)) + 1
+  end_idx = grep("number_of_analyzed_fields", colnames(founders_quantal_collection$all_plates)) - 1
+  all_features <- colnames(founders_quantal_collection$all_plates[,start_idx:end_idx])
+  return (data[,c(covariates,all_features)])
+}
+
+selected_features <- c("h2axpositive_infocus",
+                       "infocus_intensity_nucleus_alexa488_mean_mean",
+                       "infocus_intensity_cell_hoechst_mean_stdev",
+                       "infocus_cell_roundness_mean",
+                       "infocus_cell_roundness_stdev",
+                       "nuclei_numberofobjects",
+                       "infocus_numberofobjects"
+                       )
+```
+
+# Analysis
+
+## Heritability / Strain effect
+
+### Anova - strain effect
+
+```{r}
+subset_data <- retrieve_feature_df(founders_quantal_collection$all_plates, covariates = c("plate","dose","strain","sex") )
+
+anova_tests <- function(data, formula){
+  lm_test <- lm(formula, data = data)
+  anova(lm_test)
+  #plot(lm_test)
+}
+
+# full model
+anova_tests(subset_data, "nuclei_numberofobjects ~ plate+sex+strain+dose+sex:strain+dose:strain+dose:sex+dose:sex:strain")
+# drop NS interaction terms
+anova_tests(subset_data, "nuclei_numberofobjects ~ plate+sex+strain+dose+dose:strain")
+# partial confounding
+anova_tests(subset_data, "nuclei_numberofobjects ~ sex+strain+plate+dose+dose:strain")
+#  partial confounding double checking
+anova_tests(subset_data, "nuclei_numberofobjects ~ sex+strain+dose+dose:strain")
+```
+
+## Cluster analysis
+
+```{r}
+subset_data <- retrieve_feature_df(founders_quantal_collection$all_plates, covariates = c("plate","dose","strain","sex") ) %>%
+  na.omit()
+
+cluster_test <- function(data, k){
+  distance = dist(data, method = 'euclidean')
+  cluster_avg = hclust(distance, method = "average")
+  # groups <- cutree(cluster_avg, k=k)
+  par(mfrow=c(2,3))
+  plot(hclust(distance, method="single"))
+  rect.hclust(cluster_avg, k=k)
+  plot(hclust(distance, method="complete"))
+  rect.hclust(cluster_avg, k=k)
+  plot(hclust(distance, method="average"))
+  rect.hclust(cluster_avg, k=k)
+  plot(hclust(distance, method="centroid"))
+  rect.hclust(cluster_avg, k=k)
+  plot(hclust(distance, method="ward.D2"))
+  rect.hclust(cluster_avg, k=k)
+}
+
+cluster_test(subset_data, k = 6)
+```
+
+### Correlation analysis
+
+```{r}
+select_dataframe_rows = function(ds, sel) {
+  cnames = colnames(ds)
+  rnames = rownames(ds)
+  ds = data.frame(ds[sel,])
+  colnames(ds) = cnames
+  rownames(ds) = rnames[sel]
+  return (ds)
+}
+
+#  multiple_feature_evaluation_variance <- function(conc,data){
+#   #dose_pairs <- cbind(conc[-length(conc)], conc[-1])
+#   # dose_pairs <- expand.grid(conc, conc)
+#   # dose_pairs <- subset(dose_pairs , Var1 != Var2 & Var1 < Var2)
+# 
+#   list_of_correlations <- list()
+#     for (i in 1:nrow(dose_pairs)){
+#       low <- dose_pairs[i, "Var1"]
+#       high  <- dose_pairs[i, "Var2"]
+#       print(paste("calculate difference on features between", low,"and",high))
+# 
+#       sub_df <- data %>%
+#         dplyr::filter(dose %in% c(low,high)) %>%
+#         separate(mouse, c("strain","replicate")) %>%
+#         group_by(strain,dose) %>%
+#         summarise_each(funs(mean), -c(replicate)) %>%
+#         group_by(strain) %>%
+#         summarise_at(vars(-dose),diff)
+# 
+#       # Transpose everything other than the first column
+#       sub_df.T <- as.data.frame(as.matrix(t(sub_df[,-1])))
+# 
+#       # keep the first column
+#       names <-  sub_df$strain
+#       
+#       # Assign first column as the column names of the transposed dataframe
+#       colnames(sub_df.T) <- names
+#       sub_df.T$mean <- rowMeans(sub_df.T)
+#       sub_df.T$var<- matrixStats::rowVars(as.matrix(t(sub_df[,-1])))
+#       
+#       names(sub_df.T)[names(sub_df.T) == "mean"] <- paste0("mean_change_",low,"_",high)
+#       names(sub_df.T)[names(sub_df.T) == "var"] <- paste0("var_change_",low,"_",high)
+#       
+#       list_of_correlations[[paste0("d_",low,"_",high)]] <- sub_df.T
+#       # generate subset of values
+#     }
+#   return (list_of_correlations)
+# }
+
+  multiple_feature_evaluation_variance_v2 <- function(conc,data){
+
+  variance_list <- list()
+    for (i in 1:nrow(dose_pairs)){
+      low <- dose_pairs[i, "Var1"]
+      high  <- dose_pairs[i, "Var2"]
+      print(paste("calculate difference on features between", low,"and",high))
+
+      sub_df <- data %>%
+        dplyr::filter(dose %in% c(low,high)) %>%
+        separate(mouse, c("strain","replicate")) %>%
+        group_by(strain,dose) %>%
+        summarise_each(funs(mean), -c(replicate)) %>%
+        group_by(strain) %>%
+        summarise_at(vars(-dose),diff)
+
+      # Transpose everything other than the first column
+      sub_df.T <- as.data.frame(as.matrix(t(sub_df[,-1])))
+
+      # keep the first column
+      names <-  sub_df$strain
+      
+      # Assign first column as the column names of the transposed dataframe
+      colnames(sub_df.T) <- names
+      sub_df.T$mean <- rowMeans(sub_df.T)
+      sub_df.T$var<- matrixStats::rowVars(as.matrix(t(sub_df[,-1])))
+      
+      mean_col_name <- paste0("mean_change_",low,"_",high)
+      var_col_name <- paste0("var_change_",low,"_",high)
+      
+      names(sub_df.T)[names(sub_df.T) == "mean"] <- paste0("mean_change_",low,"_",high)
+      names(sub_df.T)[names(sub_df.T) == "var"] <- paste0("var_change_",low,"_",high)
+      sub_df.T$feature <- row.names(sub_df.T)
+      
+      variance_list[[paste0("d_",low,"_",high)]] <- sub_df.T[c('feature',mean_col_name,var_col_name)]
+    }
+  return (variance_list)
+}
+ 
+multiple_feature_evaluation_correlations <- function(conc, data){
+
+  corr_matrix_list <- list()
+  for (i in 1:nrow(dose_pairs)){
+    low <- dose_pairs[i, "Var1"]
+    high  <- dose_pairs[i, "Var2"]
+    print(paste("calculate difference on features between", low,"and",high))
+    
+    sub_df <- data %>%
+      dplyr::filter(dose %in% c(low,high)) %>%
+      separate(mouse, c("strain","replicate")) %>%
+      group_by(strain,dose) %>% 
+      summarise_each(funs(mean), -c(replicate)) %>%
+      group_by(strain) %>%
+      summarise_at(vars(-dose),diff)
+    
+    # keep the first column 
+    names <-  sub_df$strain
+    
+    # Transpose everything other than the first column
+    sub_df.T <- as.data.frame(as.matrix(t(sub_df[,-1])))
+    
+    # Assign first column as the column names of the transposed dataframe
+    colnames(sub_df.T) <- names
+    res2<-Hmisc::rcorr(as.matrix(t(sub_df.T)))
+    ut <- upper.tri(res2$r)
+    
+    features_a <- rownames(res2$r)[row(res2$r)[ut]]
+    features_b <- rownames(res2$r)[col(res2$r)[ut]]
+    correl_ <- (res2$r)[ut]
+    
+    flat_matrix <- data.frame(
+      feature_a = features_a,
+      feature_b = features_b,
+      cor  = correl_
+      )
+    colnames(flat_matrix)[3] <- paste0("cor_",low,"_",high)
+    
+    # add avg SD of slope variance 
+    
+    #corr_matrix_list[[paste0("d_",low,"_",high)]] <- flat_matrix
+   corr_matrix_list[[paste0("d_",low,"_",high)]] <-  res2$r
+    # generate subset of values 
+  }
+  return (corr_matrix_list)
+}
+
+retrieve_feature_df_rescaled <- function(data, covariates){
+  start_idx = grep("timepoint", colnames(founders_quantal_collection$all_plates)) + 1
+  end_idx = grep("number_of_analyzed_fields", colnames(founders_quantal_collection$all_plates)) - 1
+  all_features <- colnames(founders_quantal_collection$all_plates[,start_idx:end_idx])
+  data[,c(all_features)] <- lapply(data[,c(all_features)], function(x) scale(x, center = FALSE, scale = max(x, na.rm = TRUE)/100))
+  return (data[,c(covariates,all_features)])
+}
+
+# consolidate data
+
+consolidated_dfs <- function(corr_matrix_list,var_matrix_list){
+  join_test <- corr_matrix_list %>% 
+    reduce(left_join, by = c("feature_a", "feature_b"))
+  join_test$cor_means <- rowMeans(subset(join_test, select = -c(feature_a,feature_b)), na.rm=TRUE)
+  join_test2 <- var_matrix_list %>% 
+    reduce(left_join, by = c("feature"))
+  join_all <- join_test %>%
+    left_join(join_test2, by=c("feature_a" = "feature") )%>%
+    left_join(join_test2, by=c("feature_b" = "feature") )
+  return (join_all)
+}
+
+dose_pairs <- as.data.frame(cbind(
+  Var1=c(0,0.1,0.5,1,2,3,4),
+  Var2=c(0.1,0.5,1,2,3,4,5)))
+
+
+# handle outliers tbd
+subset_data <- retrieve_feature_df_rescaled(founders_quantal_collection$all_plates, covariates = c("dose","mouse") )
+
+#copy_dat[,c(all_features)] <- lapply(copy_dat[,c(all_features)], function(x) scale(x, center = FALSE, scale = max(x, na.rm = TRUE)/100))
+corr_matrix_list <- multiple_feature_evaluation_correlations(dose_pairs,data=subset_data)
+var_matrix_list <- multiple_feature_evaluation_variance_v2(dose_pairs,data=subset_data)
+
+consolidated_df <- consolidated_dfs(corr_matrix_list,var_matrix_list)
+```
+```{r]}
+# here
+# select by weights
+n <- 10 # select top hits
+var_weight <- 9 # 1 to 10 low to high variance
+corr_weight <- 2 # 1 to 10 low to high
+
+# add hclusts?  Accumulate means
+
+```
+
+### PCA
+
+```{r}
+multiple_pca_evaluation <- function(conc, data){
+  pca_list <- list()
+
+  for (i in 1:nrow(dose_pairs)){
+    low <- dose_pairs[i, "Var1"]
+    high  <- dose_pairs[i, "Var2"]
+    print(paste("generating PCA plot for between", low,"and",high))
+    
+    sub_df <- data %>%
+      dplyr::filter(dose %in% c(low,high)) %>%
+      #separate(mouse, c("strain","replicate")) %>%
+      group_by(mouse, dose) %>% 
+      summarise_each(funs(mean)) %>%
+      group_by(mouse) %>%
+      summarise_at(vars(-dose),diff)
+    
+      # Transpose everything other than the first column
+      sub_df.T <- as.data.frame(as.matrix(t(sub_df[,-1])))
+  
+      # keep the first column
+      names <-  sub_df$mouse
+      
+      # Assign first column as the column names of the transposed dataframe
+      colnames(sub_df.T) <- names
+      # PCA area
+      # mouse classes
+      #mouse <- row.names(sub_df.T)
+      palette <- randomcoloR::distinctColorPalette(length(unique(row.names(sub_df.T))))
+
+      cols <- row.names( as.data.frame(t(sub_df.T)))
+      pca_data <- cbind(cols, as.data.frame(t(sub_df.T)))
+      data_prc <-  pcaMethods::pca(pca_data[,-1], scale = "uv", center=TRUE) # nPcs = 100
+      slplot_ <- pcaMethods::slplot(data_prc, scoresLoadings = c(T,T), ll = seq(1, ncol(pca_data)-1), cmain = paste(low,"and",high))
+      pca_list[[paste0("d_",low,"_",high)]] <- slplot_
+  }
+  return (pca_list)
+}
+
+pca_list <- multiple_pca_evaluation(dose_pairs, data=copy_dat[,c("dose","mouse", all_features)])
+
+#pcaMethods::slplot(pcaMethods::pca(transposed, npc2 = 100, scale = "uv", center=TRUE), scoresLoadings = c(T,F))
+#data_prc_0 <- prcomp(na.omit(t(pca_list$d_0_0.1)), center=TRUE, scale=TRUE, rank. =100)
+# PCAscores <- data_prc_0$x
+# PCAloadings <- data_prc_0$rotation
+# mouse <- row.names(pca_list$d_0_0.1)
+# PCAcolors <- RColorBrewer:: brewer.pal(length(mouse), "Paired")
+
+
+#PCAcolors <- c("#66c2a5","#fc8d62","#8da0cb")[as.integer(vint)]
+#par(mfrow=c(2,1))
+# plot(PCAscores,  # x and y data
+#      pch=21,           # point shape
+#      col=PCAcolors,    # point border color
+#      bg=PCAcolors,     # point color
+#      cex=0.5,          # point size
+#      main="Scores"     # title of plot
+# )
+# legend("topright",      
+#        legend=mouse,                       # legend display
+#        pch=21,                                    # point shape
+#        pt.bg=PCAcolors,    # point colors
+#        pt.cex=0.5,                                # point size
+#        col = PCAcolors    # point border color
+# )
+# text(PCAscores,     
+#      cex = 0.6,# sets position of labels
+#      labels=seq(1, length(rownames(PCAscores)))   # print labels
+# )
+```
+
+### Correlation heatmap
+
+
+```{r}
+# features <- unique(consolidated_df$feature_a)
+# size <- length(features)
+# df <- data.frame(matrix(ncol = size, nrow = size))
+# colnames(df) <- features
+# row.names(df) <- features
+# 
+# lookup_corrs <- consolidated_df[,c("feature_a","feature_b","cor_means")]
+# 
+# heatmap_correlations <- reshape2::acast(lookup_corrs, feature_a~feature_b, value.var = "cor_means")
+corr_matrix_mean_all <- Reduce("+",corr_matrix_list)/length(corr_matrix_list)
+col<- c("black",colorRampPalette(c("orange", "white", "red"))(6),"cyan")
+png("~/Desktop/heatmap_test.png", width=4000, height=4000)
+gplots::heatmap.2(corr_matrix_mean_all, 
+        hclustfun = hclust,
+        distfun = dist,
+        symbreaks = TRUE,
+        dendrogram = "both",
+        col = col,
+        sepwidth = c(0,0),
+        key = TRUE,
+        trace = 'none',
+        main = "Feature mean correlation heatmap",
+        #density.info = 'density',
+        #na.rm = TRUE,
+        margins = c(20,20),
+        #scale="row",
+        breaks = c(-1,-0.99,-0.9, -0.25,0, 0.25,0.9,0.99,1),
+        symm=TRUE)
+
+```
+
+
+## Save/overwrite RDS
+
+```{r}
+temp_data_storage <- paste0("temp_files/founders_quantal_reduced.RData")
+saveRDS(founders_quantal_collection, temp_data_storage)
+```
+
