@@ -39,6 +39,9 @@ library(nlme) # mixed effects library
 library(medrc) # drc + medrc wrapper
 library(ggplot2) 
 library(ggpubr) # ggplot extension
+library(foreach)
+library(doSNOW)
+library(microbenchmark)
 ```
 
 # Load data
@@ -61,7 +64,7 @@ response_transform <- function(response_var){
     skew.score <- function(c, x) (e1071::skewness(log(x + c)))^2
     if (!is.na(skew_val)){
       print(paste0("performing log transformation with skew:", skew_val))
-      best.c <- optimise(skew.score, c(0, 1), x = response_var)$minimum
+      best.c <- stats::optimise(skew.score, c(0, 1), x = response_var)$minimum
       response_var <- log(response_var + best.c)
     }else{
       print("No optimization")
@@ -71,9 +74,9 @@ response_transform <- function(response_var){
     return(response_var)
 }
 
-mixed_drc_plot_v2 <- function(x, var) {
+mixed_drc_plot_v2 <- function(x, var, logx=TRUE) {
   # data prep
-  logx = TRUE
+
   level = NULL
   ranef = TRUE
   ndose = 100
@@ -219,6 +222,7 @@ mixed_drc_plot_v2 <- function(x, var) {
 }
 
 
+
 try_mixed_drm_v3 <- function(data, 
                           response_var, 
                           transform, 
@@ -228,8 +232,8 @@ try_mixed_drm_v3 <- function(data,
   
   # prepare data
   data <- data %>%
-    na.omit() %>% 
-    mutate(sex = as.factor(sex),
+    stats::na.omit() %>% 
+    dplyr::mutate(sex = as.factor(sex),
           dose = as.numeric(as.character(dose))) %>%
     dplyr::select_(.dots = 
                      list(response = response_var, 
@@ -300,90 +304,216 @@ try_mixed_drm_v3 <- function(data,
 
   return (m.1)
 }
-```
 
-```{r}
-example_set <- c("h2axpositive_infocus",
-                       "infocus_intensity_nucleus_alexa488_mean_mean",
-                       "infocus_intensity_cell_hoechst_mean_stdev",
-                       "infocus_cell_roundness_mean",
-                       "infocus_cell_roundness_stdev",
-                       "nuclei_numberofobjects",
-                       "infocus_numberofobjects"
-                       )
+try_mixed_drm_v4 <- function(data, 
+                          response_var, 
+                          transform, 
+                          weight_var = 'dose',
+                          fct,
+                          strain_name){
+  
+  # prepare data
+  data <- data %>%
+    stats::na.omit() %>% 
+    dplyr::mutate(sex = as.factor(sex),
+          dose = as.numeric(as.character(dose))) %>%
+    dplyr::select_(.dots = 
+                     list(response = response_var, 
+                          weight_var = weight_var,
+                          dose = 'dose', 
+                          plate = 'plate', 
+                          sex = 'sex', 
+                          strain = 'strain',
+                          mouse = 'mouse')
+                   )
 
-transformations <- c('log_skew_transform','zero_replace', 'scale_positive')
-
-df_instructions <- founders_quantal_collection$features_df
-
-param_fct <- list("LL.4"=LL.4(),"W1.4"=W1.4(),"W2.4"=W2.4())
-
-model_success_list <- vector("list", length(unique(founders_quantal_collection$all_plates$strain)))
-names(model_success_list) <- unique(founders_quantal_collection$all_plates$strain)
-
-#for (f in founders_quantal_collection$features_df$name_){
-
-#library(foreach)
-#library(doSNOW)
-#cl <- suppressWarnings(makeCluster(12, type="SOCK")) # for 12 cores machine
-#suppressWarnings(doSNOW::registerDoSNOW (cl))
-
-start_idx = grep("timepoint", colnames(founders_quantal_collection$all_plates)) + 1
-end_idx = grep("number_of_analyzed_fields", colnames(founders_quantal_collection$all_plates)) - 1
-example_set <- colnames(founders_quantal_collection$all_plates[,start_idx:end_idx])
-
-# replace metadata columns -- misaligned
-founders_quantal_collection$features_df$name_ <- colnames(founders_quantal_collection$all_plates[,start_idx:end_idx])
-
-ed50_df <- data.frame(
-  "feature" = example_set, 
-  "LL.4" = NA, 
-  "W1.4" = NA, 
-  "W2.4" = NA
+  if ('zero_replace' %in% transform){
+    print("replacing zero with 0.0001")
+    data$response[data$response == 0] <- 0.0001
+  }
+   if ('log_skew_transform' %in% transform) {
+    data$response <- log_skew_transform(data$response)
+  } 
+    if ('scale_positive' %in% transform){
+    # rescale data between 0 and 1
+    new_max = abs(min(data$response))+0.001
+    print(paste("scaling to 0 and",new_max))
+    data$response <- scales::rescale(data$response,to = c(0,new_max),finite=TRUE,na.rm=TRUE)
+    } 
+  
+  # curve specific difference to the parameter average
+  check_plate <- medrc::metadrm(
+    response ~ dose,
+    data = data,
+    fct = fct,
+    ind = plate,
+    struct = "UN"
+  )
+  
+  cmat <- matrix(coefficients(check_plate), ncol=4)
+  # fixed effect starting values
+  m <- apply(cmat, 2, mean)
+  names(m) <- letters[2:5]
+  rmat <- t(apply(cmat, 1, function(x) x-m)) # random effect starting values
+  rownames(rmat) <- levels(data$plate)
+  colnames(rmat) <- letters[2:5]
+  ####################################
+  
+  # mixed model drm fit
+  # mixed model drm fit
+  m.1 <- medrc::medrm(
+    response ~ dose,
+    data = data,#subset(data, strain == strain_name),
+    fct = fct,
+    # random effects
+    #random = b + c + d ~ 1 | plate/sex/strain/mouse, #doesn't work
+    random = b + c + d ~ 1 | mouse , # but this does
+    #random = b + c + d ~ 1 | mouse / strain / sex / plate, # and this does
+    weights = varExp(form = ~ weight_var),
+    control = nlme::nlmeControl(
+      tolerance = 0.1,
+      pnlsTol = 1,
+      msMaxIter = 2000
+    ),
+    # initial values for fixed components
+    start = list(fixed = m[c("b", "c", "d", "e")], plate = rmat)
   )
 
+  ### effective dose estimation ED25, ED50, ED75
+  # based on the fixed effect estimates
+  # conditional on random effects of 0
+  # drc::ED(m.1, c(25, 50, 75), interval="tfls") 
+
+  return (m.1)
+}
+```
 
 
-system.time(
+## Setting up feature instructions
 
-    for (f_ in example_set){
-      for (fct_ in param_fct){
+```{r}
+start_idx = grep("timepoint", colnames(founders_quantal_collection$all_plates)) + 1
+end_idx = grep("number_of_analyzed_fields", colnames(founders_quantal_collection$all_plates)) - 1
+founders_quantal_collection$features_df$name_ <- colnames(founders_quantal_collection$all_plates[,start_idx:end_idx])
+
+# example_set <- c("h2axpositive_infocus",
+#                        "infocus_intensity_nucleus_alexa488_mean_mean",
+#                        "infocus_intensity_cell_hoechst_mean_stdev",
+#                        "infocus_cell_roundness_mean",
+#                        "infocus_cell_roundness_stdev",
+#                        "nuclei_numberofobjects",
+#                        "infocus_numberofobjects"
+#                        )
+```
+
+# Generate DRC curves within nested cluster
+
+```{r}
+cl <- suppressWarnings(makeCluster(12, type="SOCK")) # for 12 cores machine
+
+suppressWarnings(doSNOW::registerDoSNOW (cl))
+
+smaller_test <- 
+
+system.time({
+    fcts <-  list("LL.4" = LL.4(),"W1.4" = W1.4(),"W2.4" = W2.4())
+    cluster_results_df <- foreach (f_ = founders_quantal_collection$features_df$name_[50:75], .combine = 'rbind') %:% 
+      foreach (fct_ = fcts, .combine = 'cbind', .inorder=TRUE, .packages = c("drc", "nlme", "medrc","dplyr","stats")) %dopar%  {
         tryCatch(
-          
+
             expr = {
-              print(paste0("checking ",f_, " with ", fct_$name))
-              temp_df[which(temp_df$feature == f_, arr.ind=TRUE), fct_$name] <- "fail"
-              m <-suppressWarnings(try_mixed_drm_v3(founders_quantal_collection$all_plates,
+
+              m <-try_mixed_drm_v4(founders_quantal_collection$all_plates,
                 response_var = f_,
-                transform = c('log_skew_transform'),
+                transform = c('none'),
                 weight_var = 'infocus_numberofobjects',
                 fct = fct_
-                ))
-
-             ed50_df[which(ed50_df$feature == f_, arr.ind=TRUE), fct_$name] <- drc::ED(m, c(50), interval="tfls", bound=TRUE)[1]
-
-              print("success")
+                )
+              
+              ed50 <- drc::ED(m, c(50), interval="tfls", bound=TRUE)[1]
+              colname_ <- paste0("ed50_",fct_)
+              temp_df_row <- data.frame("name" = f_, "ed50" = ed50)
+              colnames(temp_df_row)[2] <- paste0(fct_$name,"_ed50")
+              temp_df_row
             },
             error = function(e){
-              print("fail")
-            },
-            finally = {
-              # evaluate success and merge models
-              print("-----------")
+              colname_ <- paste0("ed50_",fct_)
+              temp_df_row <- data.frame("name" = f_, "ed50" = NA)
+              colnames(temp_df_row)[2] <- paste0(fct_$name,"_ed50")
+             temp_df_row
             }
         )
         
       }
-    }
- )
+    cluster_results_df <- cluster_results_df[, !duplicated(colnames(cluster_results_df), fromLast = FALSE)] 
+})
+stopCluster(cl)
+```
+
+```{r}
 
 
-# drc::ED(m, c(50), interval="tfls", bound=TRUE) 
+# copy_data<-founders_quantal_collection$all_plates
 # 
-# p <- suppressWarnings(mixed_drc_plot_v2(m, 
-#     var = 'something'
+# 
+#   # try to get each ED50 per strain out of model
+# m.alexa <- suppressWarnings(try_mixed_drm_v3(copy_data, 
+#     'infocus_intensity_nucleus_alexa488_mean_mean', 
+#     transform = c('log_skew_transform'), 
+#     weight_var = 'infocus_numberofobjects',
+#     fct = LL.4()
+#     ))
+# 
+# x <- m.alexa
+# fct <- x$fct
+# yname <- as.character(x$form)[2]
+# xname <- as.character(x$form)[3]
+# fname <- as.character(x$curveid)[3]
+# pform <- x$form
+# ndose <- 1000
+# mf <- model.frame(pform, data = x$data)
+# dr <- seq(min(mf[, 2]), max(mf[, 2]), length = ndose)
+# 
+# # coefficients for each strain
+# cf <- coef(x$fit)
+# 
+# # this is where the magic happens
+# predictions_df <-
+#   data.frame(apply(cf, 1, function(para)
+#     x$fct$fct(dr, rbind(
+#       para
+#     ))))
+# 
+# predictions_stacked <- stack(predictions_df)$values
+# 
+# pdat <-
+#   data.frame(
+#     predictions_stacked,
+#     dose = rep(dr, times = nrow(cf)),
+#     ID = rep(rownames(cf), each = ndose)
+#   )
+# 
+# # average by pdat / strain
+# pdat_by_strain <- pdat %>% 
+#   separate(ID, c("mouse","strain","sex","plate"), sep = "([./:])") %>%
+#    group_by(strain,dose) %>% 
+#    summarise_at(vars("predictions_stacked"), mean) %>% 
+#   dplyr::select(predictions_stacked, dose, strain) %>% 
+#   dplyr::rename(
+#     predictions = predictions_stacked,
+#     ID = strain
+#     ) %>% group_by(ID) %>%
+#   filter(row_number()==ceiling(n()/2))
+# 
+# 
+# find_ec50_at_50p <- ndose/2
+# 
+# p.alexa <- suppressWarnings(mixed_drc_plot_v2(m.alexa, 
+#     var = 'alexa',
+#     logx = TRUE
 # ))
-# p
+# 
+# p.alexa
 ```
 
 ## Save/overwrite RDS
