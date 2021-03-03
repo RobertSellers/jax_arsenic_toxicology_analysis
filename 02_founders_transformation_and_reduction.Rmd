@@ -377,152 +377,58 @@ filter_exceedances <- function(list_data, n, corr_cut_off){
   sub_stdev$name <- rownames(sub_stdev)
   intersecting_features <- intersect(sub_stdev$name,vals$name)
   remove <- c()
+  keep <- c()
   # start @ lowest stdev
-for (i in 1:nrow(sub_stdev)){
-  name <- gsub("\\..*","",sub_stdev[i,]$name)
-  if (name %in% intersecting_features){
-      #value is among those with high correlation
-      f_corr_df <- vals[vals[,'name']==name,]
-      f_corr_df_mirror <- vals[(vals[,'col'] ==  f_corr_df$row),]
-      
-      print(paste("HIGH CORRELATION | ", name," | ",round(sub_stdev[i,]$sdmeans, 2),"| n =", nrow(f_corr_df)," | n2 =", nrow(f_corr_df_mirror)))
-      
-      # not the greatest looking code
-      f_corr_all <- cbind(f_corr_df,f_corr_df_mirror)[,c(4,8,3)] %>% 
-        left_join(sub_stdev, by = c("name" = "name")) %>%
-        left_join(sub_stdev, by = c("name.1" = "name")) %>%
-        select(contains(c("name","correlation","sdmeans"))) %>% 
-        arrange(desc(abs(correlation)))
-        
-      
-      for (r in 1:nrow(f_corr_all)){
-
-          if (f_corr_all$sdmeans.x[r] >= f_corr_all$sdmeans.y[r]){
-            if(f_corr_all$name.1[r] %in% remove){
-              print(paste(f_corr_all$name.1[r],"already being removed"))
+  for (i in 1:nrow(sub_stdev)){
+    name <- gsub("\\..*","",sub_stdev[i,]$name)
+    if (name %in% intersecting_features){
+        #value is among those with high correlation
+        f_corr_df <- vals[vals[,'name']==name,]
+        f_corr_df_mirror <- vals[(vals[,'col'] ==  f_corr_df$row),]
+        # print(paste("HIGH CORRELATION | ", name," | ",round(sub_stdev[i,]$sdmeans, 2),"| n =", nrow(f_corr_df)," | n2 =", nrow(f_corr_df_mirror)))
+        f_corr_all <- cbind(f_corr_df,f_corr_df_mirror)[,c(4,8,3)] %>% 
+          left_join(sub_stdev, by = c("name" = "name")) %>%
+          left_join(sub_stdev, by = c("name.1" = "name")) %>%
+          select(contains(c("name","correlation","sdmeans"))) %>% 
+          arrange(desc(abs(correlation)))
+        for (r in 1:nrow(f_corr_all)){
+            if (f_corr_all$sdmeans.x[r] >= f_corr_all$sdmeans.y[r]){
+              if(f_corr_all$name.1[r] %in% remove){
+                # print(paste(f_corr_all$name.1[r],"already being removed"))
+              }else{
+                # print(paste(r,"remove", f_corr_all$name.1[r], ", keep", f_corr_all$name[r]))
+                remove <- c(remove,f_corr_all$name.1[r])
+              }
             }else{
-              print(paste(r,"remove", f_corr_all$name.1[r], ", keep", f_corr_all$name[r]))
-              remove <- c(remove,f_corr_all$name.1[r])
+              if(f_corr_all$name[r]%in% remove){
+                # print(paste(f_corr_all$name[r],"already being removed"))
+              }else{
+                # print(paste(r,"remove", f_corr_all$name[r], ", keep", f_corr_all$name.1[r]))
+                remove <- c(remove,f_corr_all$name[r],)
+              }
             }
-          }else{
-            if(f_corr_all$name[r]%in% remove){
-              print(paste(f_corr_all$name[r],"already being removed"))
-            }else{
-              print(paste(r,"remove", f_corr_all$name[r], ", keep", f_corr_all$name.1[r]))
-              remove <- c(remove,f_corr_all$name[r],)
-            }
-          }
-        
-      }
-      
-      print(f_corr_all)
-  }else{
-    print(paste("OK  | ", name))
+        }
+        # print(f_corr_all)
+    }else{
+      # print(paste("OK  | ", name))
+    }
   }
-}
-  print(paste("removing", length(remove),"/",n,"features"))
-  return (remove)
-}
-removals <- filter_exceedances(list_data = test, n = 50, corr_cut_off = 0.9)
-```
-
-```{r}
-removals <- filter_exceedances(list_data = test, n = 13, corr_cut_off = 0.7)
-```
-
-```{r}
-n <- 30
-vals <- feature_exceedance_extraction(dr_list_object = test, corr_cut_off = 0.90, n = n)
-sub_stdev <- extract_mean_stdev(test$stdev_df_list, n=n)
-sub_stdev$name <- rownames(sub_stdev)
-vals$name <- gsub("\\..*","",rownames(vals))
-
-intersecting_features <- intersect(sub_stdev$name,vals$name)
-remove <- c()
-# start @ lowest stdev
-for (i in 1:nrow(sub_stdev)){
-  name <- gsub("\\..*","",sub_stdev[i,]$name)
-  if (name %in% intersecting_features){
-      #value is among those with high correlation
-      f_corr_df <- vals[vals[,'name']==name,]
-      f_corr_df_mirror <- vals[(vals[,'col'] ==  f_corr_df$row),]
-      
-      print(paste("HIGH CORRELATION | ", name," | ",round(sub_stdev[i,]$sdmeans, 2),"| n =", nrow(f_corr_df)," | n2 =", nrow(f_corr_df_mirror)))
-      
-      f_corr_all <- cbind(f_corr_df,f_corr_df_mirror)[,c(4,8,3)] %>% 
-        left_join(sub_stdev, by = c("name" = "name")) %>%
-        left_join(sub_stdev, by = c("name.1" = "name")) %>%
-        select(contains(c("name","correlation","sdmeans"))) %>% 
-        arrange(desc(abs(correlation)))
-        
-      
-      for (r in 1:nrow(f_corr_all)){
-
-          if (f_corr_all$sdmeans.x[r] >= f_corr_all$sdmeans.y[r]){
-            if(f_corr_all$name.1[r] %in% remove){
-              print(paste(f_corr_all$name.1[r],"already being removed"))
-            }else{
-              print(paste(r,"remove", f_corr_all$name.1[r], ", keep", f_corr_all$name[r]))
-              remove <- c(remove,f_corr_all$name.1[r])
-            }
-          }else{
-            if(f_corr_all$name[r]%in% remove){
-              print(paste(f_corr_all$name[r],"already being removed"))
-            }else{
-              print(paste(r,"remove", f_corr_all$name[r], ", keep", f_corr_all$name.1[r]))
-              remove <- c(remove,f_corr_all$name[r],)
-            }
-          }
-        
-      }
-      
-      print(f_corr_all)
-  }else{
-    print(paste("OK  | ", name))
-  }
+  keep <- sub_stdev[sub_stdev$name %notin% remove,]
+  remove <- sub_stdev[sub_stdev$name %in% remove,]
+  print(paste("salvaging", nrow(keep),"/",n,"features"))
+  return (list("keep"=keep,"remove"=remove))
 }
 ```
 
-
-
-### Correlation heatmap
-
-
 ```{r}
+# before heatmap
 
-corr_matrix_mean_all <- Reduce("+",corr_matrix_list)/length(corr_matrix_list)
-col<- c("black",colorRampPalette(c("orange", "white", "red"))(6),"cyan")
-png("output/mean_dr_correlation_heatmap.png", width = 4000, height = 4000)
-gplots::heatmap.2(corr_matrix_mean_all, 
-        hclustfun = hclust,
-        distfun = dist,
-        symbreaks = TRUE,
-        dendrogram = "both",
-        col = col,
-        sepwidth = c(0,0),
-        key = TRUE,
-        trace = 'none',
-        main = "Feature mean correlation heatmap",
-        #density.info = 'density',
-        #na.rm = TRUE,
-        margins = c(20,20),
-        #scale="row",
-        breaks = c(-1,-0.99,-0.9, -0.25,0, 0.25,0.9,0.99,1),
-        symm=TRUE)
+# this function removes the least possible # of features given a one:many correlation associations
+results <- filter_exceedances(list_data = test, n = 200, corr_cut_off = 0.95)
 
-```
+# after heatmap
 
-```{r}
-# find high overall correlations
-
-for (i in 1:nrow(corr_matrix_mean_all)){
-  correlations <-  which((corr_matrix_mean_all[i,] > 0.85) & (corr_matrix_mean_all[i,] != 1))
-  
-  if(length(correlations)> 0){
-    print(colnames(corr_matrix_mean_all)[i])
-    print(correlations)
-  }
-}
+# subset quantal data
 ```
 
 
