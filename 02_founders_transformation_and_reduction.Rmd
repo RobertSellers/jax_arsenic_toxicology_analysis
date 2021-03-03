@@ -52,13 +52,6 @@ founders_quantal_collection <- readRDS(temp_data_storage)
 # Data source construction
 
 ```{r}
-retrieve_feature_df <- function(data, covariates){
-  start_idx = grep("timepoint", colnames(founders_quantal_collection$all_plates)) + 1
-  end_idx = grep("number_of_analyzed_fields", colnames(founders_quantal_collection$all_plates)) - 1
-  all_features <- colnames(founders_quantal_collection$all_plates[,start_idx:end_idx])
-  return (data[,c(covariates,all_features)])
-}
-
 selected_features <- c("h2axpositive_infocus",
                        "infocus_intensity_nucleus_alexa488_mean_mean",
                        "infocus_intensity_cell_hoechst_mean_stdev",
@@ -71,124 +64,15 @@ selected_features <- c("h2axpositive_infocus",
 
 # Analysis
 
+## Correlation analysis and Dimension Reduction
 
-
-## Correlation analysis
+### Functions
 
 ```{r}
-select_dataframe_rows = function(ds, sel) {
-  cnames = colnames(ds)
-  rnames = rownames(ds)
-  ds = data.frame(ds[sel,])
-  colnames(ds) = cnames
-  rownames(ds) = rnames[sel]
-  return (ds)
-}
-# consolidate data
-consolidated_dfs <- function(corr_matrix_list,var_matrix_list){
-  join_test <- corr_matrix_list %>% 
-    reduce(left_join, by = c("feature_a", "feature_b"))
-  join_test$cor_means <- rowMeans(subset(join_test, select = -c(feature_a,feature_b)), na.rm=TRUE)
-  join_test2 <- var_matrix_list %>% 
-    reduce(left_join, by = c("feature"))
-  join_all <- join_test %>%
-    dplyr::left_join(join_test2, by=c("feature_a" = "feature") )%>%
-    dplyr::left_join(join_test2, by=c("feature_b" = "feature") )
-  return (join_all)
-}
-
-multiple_feature_evaluation_variance <- function(conc,data){
-
-  variance_list <- list()
-    for (i in 1:nrow(dose_pairs)){
-      low <- dose_pairs[i, "Var1"]
-      high  <- dose_pairs[i, "Var2"]
-      print(paste("calculate difference on features between", low,"and",high))
-
-      sub_df <- data %>%
-        dplyr::filter(dose %in% c(low,high)) %>%
-        separate(mouse, c("strain","replicate")) %>%
-        group_by(strain,dose) %>%
-        summarise_each(funs(mean), -c(replicate)) %>%
-        group_by(strain) %>%
-        summarise_at(vars(-dose),diff)
-
-      # Transpose everything other than the first column
-      sub_df.T <- as.data.frame(as.matrix(t(sub_df[,-1])))
-
-      # keep the first column
-      names <-  sub_df$strain
-      
-      # Assign first column as the column names of the transposed data frame
-      colnames(sub_df.T) <- names
-      sub_df.T$mean <- rowMeans(sub_df.T)
-      sub_df.T$var<- matrixStats::rowVars(as.matrix(t(sub_df[,-1])))
-      
-      mean_col_name <- paste0("mean_change_",low,"_",high)
-      var_col_name <- paste0("var_change_",low,"_",high)
-      
-      names(sub_df.T)[names(sub_df.T) == "mean"] <- paste0("mean_change_",low,"_",high)
-      names(sub_df.T)[names(sub_df.T) == "var"] <- paste0("var_change_",low,"_",high)
-      sub_df.T$feature <- row.names(sub_df.T)
-      
-      variance_list[[paste0("d_",low,"_",high)]] <- sub_df.T[c('feature',mean_col_name,var_col_name)]
-    }
-  return (variance_list)
-}
- 
-
-
-multiple_feature_evaluation_correlations <- function(conc, data){
-
-  corr_matrix_list <- list()
-  for (i in 1:nrow(dose_pairs)){
-    low <- dose_pairs[i, "Var1"]
-    high  <- dose_pairs[i, "Var2"]
-    print(paste("calculate difference on features between", low,"and",high))
-    
-    sub_df <- data %>%
-      dplyr::filter(dose %in% c(low,high)) %>% # select only values inside low and high
-      separate(mouse, c("strain","replicate")) %>% # extract specific
-      group_by(strain,dose) %>% 
-      summarise_each(funs(mean), -c(replicate)) %>%
-      group_by(strain) %>%
-      summarise_at(vars(-dose),diff)
-    
-    # keep the first column 
-    names <-  sub_df$strain
-    
-    # Transpose everything other than the first column
-    sub_df.T <- as.data.frame(as.matrix(t(sub_df[,-1])))
-    
-    # Assign first column as the column names of the transposed dataframe
-    colnames(sub_df.T) <- names
-    res2<-Hmisc::rcorr(as.matrix(t(sub_df.T)))
-    ut <- upper.tri(res2$r)
-    
-    features_a <- rownames(res2$r)[row(res2$r)[ut]]
-    features_b <- rownames(res2$r)[col(res2$r)[ut]]
-    correl_ <- (res2$r)[ut]
-    
-    flat_matrix <- data.frame(
-      feature_a = features_a,
-      feature_b = features_b,
-      cor  = correl_
-      )
-    colnames(flat_matrix)[3] <- paste0("cor_",low,"_",high)
-    
-    # add avg SD of slope variance 
-    
-    #corr_matrix_list[[paste0("d_",low,"_",high)]] <- flat_matrix
-   corr_matrix_list[[paste0("d_",low,"_",high)]] <-  res2$r
-    # generate subset of values 
-  }
-  return (corr_matrix_list)
-}
-
 retrieve_feature_df_rescaled <- function(data, covariates){
-  start_idx = grep("timepoint", colnames(founders_quantal_collection$all_plates)) + 1
-  end_idx = grep("number_of_analyzed_fields", colnames(founders_quantal_collection$all_plates)) - 1
-  all_features <- colnames(founders_quantal_collection$all_plates[,start_idx:end_idx])
+  start_idx = grep("timepoint", colnames(data)) + 1
+  end_idx = grep("number_of_analyzed_fields", colnames(data)) - 1
+  all_features <- colnames(data[,start_idx:end_idx])
   data[,c(all_features)] <- lapply(data[,c(all_features)], function(x) scale(x, center = FALSE, scale = max(x, na.rm = TRUE)/100))
   return (data[,c(covariates,all_features)])
 }
@@ -198,18 +82,7 @@ remove_sd_vars <- function(data){
   return (data)
 }
 
-# move this to 03 or master utils
-scale_positive <- function(predictor){
-    # rescale data between 0 and 1
-    new_max = abs(min(predictor))+0.001
-    print(paste("scaling to 0 and",new_max))
-    data$response <- scales::rescale(predictor,to = c(0,new_max),finite=TRUE,na.rm=TRUE)
-}
-
-# the following:
-# 1. generates a concentration change vector
-# 2. 
-mean_correlation_by_doseresponse <- function(data, group_id = 'strain'){
+mean_correlation_by_doseresponse <- function(data, group_id = 'strain', remove_outliers = TRUE){
   
   # hardcoded - need to improve
   dose_pairs <- as.data.frame(cbind(low=c(0,0.1,0.5,1,2,3,4), high=c(0.1,0.5,1,2,3,4,5)))
@@ -269,45 +142,54 @@ mean_correlation_by_doseresponse <- function(data, group_id = 'strain'){
     corr_dose_pair_df[[paste0("interval_",low,"_",high)]] <- flat_matrix_to_df
   }
   # return all 3 sublists of matrices
-  return (list("mean_df_list" = mean_df_list,
-               "stdev_df_list" = stdev_df_list,
-               "correlation_mean_dosepairs" = corr_dose_pair_df
+  return (list("mean_corr_matrix_list" = mean_df_list,
+               "mean_stdev_df_list" = stdev_df_list,
+               "mean_corr_dosepair_df_list" = corr_dose_pair_df
                #"variance_matrices" = variance_matrix_list
                ))
 }
 
-extract_predictors <- function(list_of_weights, corr_cut_off = 0.75, n = 25){
-  # 1. subset with sd being sufficiently high inter strain
-  # 2. subset with sd being sufficiently high inter mouse
-  # currently running basic solution
-  stdev_matrix_mean_all_df <- as.data.frame(Reduce("+",list_of_weights$stdev_df_list)/length(list_of_weights$stdev_df_list))
-  stdev_matrix_mean_all_df$sdmeans <- rowMeans(stdev_matrix_mean_all_df, na.rm = TRUE)
-  sub_stdev <- stdev_matrix_mean_all_df %>% slice_max(sdmeans, n = 25)
-   #corr_matrix_mean_all <- as.data.frame(Reduce("+",test$mean_df_list)/length(test$mean_df_list))
-    # 2. iterate through data until all highly correlated values are removed
-    corr_join_all <- list_of_weights$correlation_mean_dosepairs %>% 
-      reduce(left_join, by = c("feature_a", "feature_b"))
-  # 3. ensure max 25
-    features <- data.frame("feature" = rownames(sub_stdev), "mean_sd" =sub_stdev$sdmeans)
-    
-    match_correlations <- features %>%
-        dplyr::left_join(corr_join_all, by=c("feature" = "feature_a") ) %>%
-        dplyr::filter(feature_b %in% unique(feature))
-    
-      # repeat {
-      # 
-      #   if (any(match_correlations$cor_means > corr_cut_off)==TRUE) {
-      #     break
-      #   }else{
-          #match_correlations <- subset(match_correlations, 'cor_means' < corr_cut_off)
-          #print(paste0(n-length(unique(match_correlations$feature)),"remaining"))
-          #print("infinite loop - searching for new features")        }
-      #}
-      # }
-    for (f in 1:nrow(features[order(features$feature),])){
-      print(paste("selecting",features[f, "feature"], "mean_sd:",features[f, "mean_sd"], "mean_corr", NA))
+extract_mean_stdev <- function(stdev_list, n = 'all'){
+  # reduce all matrices into a single dataframe of average values
+    stdev_reduced_df <- as.data.frame(Reduce("+",  lapply(stdev_list, function(x) replace(x, is.na(x), 0))) / length(lapply(stdev_list, Negate(is.na))))
+    if (n == 'all'){
+      n <- nrow(stdev_reduced_df)
     }
-  return (features)
+  stdev_reduced_df$sdmeans <- rowMeans(stdev_reduced_df)
+  sub_stdev <- stdev_reduced_df %>% slice_max(sdmeans, n = n)
+  return (sub_stdev)
+}
+
+extract_mean_corr <- function(corr_list){
+  
+  corr_reduced_matrix <- Reduce("+",  lapply(corr_list, function(x) replace(x, is.na(x), 0))) / length(lapply(corr_list, Negate(is.na)))
+
+  #corr_reduced_df$corrmeans <- rowMeans(corr_reduced_df)
+  return (corr_reduced_matrix)
+  
+}
+
+remove_outliers <- function(x, na.rm = TRUE, ...) {
+  qnt <- quantile(x, probs=c(.05, .95), na.rm = na.rm, ...)
+  H <- 1.5 * IQR(x, na.rm = na.rm)
+  y <- x
+  y[x < (qnt[1] - H)] <- NA
+  y[x > (qnt[2] + H)] <- NA
+  y
+}
+
+feature_exceedance_extraction <- function(dr_list_object, corr_cut_off = .99, n = 25){
+
+  # use this again later to fill the void
+  sub_stdev <- extract_mean_stdev(dr_list_object$mean_stdev_df_list, n)
+  
+  features <- data.frame("feature" = rownames(sub_stdev), "mean_sd" = sub_stdev$sdmeans)
+    vals <- subset_corr_matrix(
+      avg_corr_mat =  dr_list_object$mean_corr_matrix_list,
+      avg_std_mat = sub_stdev,
+      all_features = features,
+      corr_cut_off = corr_cut_off)
+    return(vals)
 }
 
 subset_corr_matrix <- function(avg_corr_mat, avg_std_mat, all_features, corr_cut_off){
@@ -325,67 +207,29 @@ subset_corr_matrix <- function(avg_corr_mat, avg_std_mat, all_features, corr_cut
     # ought to change this to a range? eg c(-0.9:0.9)
     correlations <- which( abs(m) > corr_cut_off, arr.ind=T )
     vals <- correlations[correlations[, 1] != correlations[, 2], ]
-    #vals2 <- avg_std_mat[avg_std_mat[, 1] != avg_std_mat[, 2], ]
-    #stds <- correlations[correlations[, 1] != correlations[, 2], ]
     vals <- as.data.frame(cbind(vals,correlation=m[vals]))
     
-    print(paste("identified",length(unique(vals$row)),"/",length(all_features$feature),"features exceeding redundancy threshold"))
+    print(paste("identified",length(unique(vals$row)),"/",length(all_features$feature),"with one or more dose pair exceeding",corr_cut_off ))
   return(vals)
 }
 
-extract_mean_stdev <- function(stdev_list, n){
-    stdev_matrix <- as.data.frame(Reduce("+",  lapply(stdev_list, function(x) replace(x, is.na(x), 0))) / length(lapply(stdev_list, Negate(is.na))))
-  stdev_matrix$sdmeans <- rowMeans(stdev_matrix)
-  sub_stdev <- stdev_matrix %>% slice_max(sdmeans, n = n)
-  return (sub_stdev)
-}
-
-feature_exceedance_extraction <- function(dr_list_object, corr_cut_off = .99, n = 25){
-
-  # use this again later to fill the void
-  sub_stdev <- extract_mean_stdev(dr_list_object$stdev_df_list, n)
+filter_exceedances <- function(list_data, n, corr_cut_off, rank_by){
   
-  features <- data.frame("feature" = rownames(sub_stdev), "mean_sd" =sub_stdev$sdmeans)
-  # this is questionable
-    vals <- subset_corr_matrix(
-      avg_corr_mat =  dr_list_object$mean_df_list,
-      avg_std_mat = sub_stdev,
-      all_features = features,
-      corr_cut_off = corr_cut_off)
-    #print(paste("dropping",nrow(vals)/2,"features for excessive correlation"))
-    return(vals)
-}
-```
-
-```{r}
-# grep out stdev + rescale all between 0 and 100
-# need to consolidate scale functions 
-subset_data_nostdev <- remove_sd_vars(retrieve_feature_df_rescaled(founders_quantal_collection$all_plates, covariates = c("dose","mouse") ))
-
-test <- mean_correlation_by_doseresponse(data=subset_data_nostdev, group_id = 'mouse')
-#corr_matrix_mean_all <- as.data.frame(Reduce("+",test$mean_df_list) / length(test$mean_df_list))
-#stdev_matrix_mean_all <- Reduce("+",test$stdev_df_list) / length(test$stdev_df_list)
-#corr_matrix_mean_all <- as.data.frame(Reduce("+",  lapply(test$mean_df_list, function(x) replace(x, is.na(x), 0))) / length(lapply(test$mean_df_list, Negate(is.na))))
-
-```
-
-```{r}
-filter_exceedances <- function(list_data, n, corr_cut_off){
+  print(paste(n,"features to be evaluated by highest", rank_by))
   vals <- feature_exceedance_extraction(dr_list_object = list_data, corr_cut_off = corr_cut_off, n = n)
   vals$name <- gsub("\\..*","",rownames(vals))
-  sub_stdev <- extract_mean_stdev(list_data$stdev_df_list, n = n)
+  sub_stdev <- extract_mean_stdev(list_data$mean_stdev_df_list, n = n)
   sub_stdev$name <- rownames(sub_stdev)
   intersecting_features <- intersect(sub_stdev$name,vals$name)
   remove <- c()
   keep <- c()
-  # start @ lowest stdev
+  
+  # start @ lowest stdev 
   for (i in 1:nrow(sub_stdev)){
     name <- gsub("\\..*","",sub_stdev[i,]$name)
     if (name %in% intersecting_features){
-        #value is among those with high correlation
         f_corr_df <- vals[vals[,'name']==name,]
         f_corr_df_mirror <- vals[(vals[,'col'] ==  f_corr_df$row),]
-        # print(paste("HIGH CORRELATION | ", name," | ",round(sub_stdev[i,]$sdmeans, 2),"| n =", nrow(f_corr_df)," | n2 =", nrow(f_corr_df_mirror)))
         f_corr_all <- cbind(f_corr_df,f_corr_df_mirror)[,c(4,8,3)] %>% 
           left_join(sub_stdev, by = c("name" = "name")) %>%
           left_join(sub_stdev, by = c("name.1" = "name")) %>%
@@ -394,23 +238,17 @@ filter_exceedances <- function(list_data, n, corr_cut_off){
         for (r in 1:nrow(f_corr_all)){
             if (f_corr_all$sdmeans.x[r] >= f_corr_all$sdmeans.y[r]){
               if(f_corr_all$name.1[r] %in% remove){
-                # print(paste(f_corr_all$name.1[r],"already being removed"))
               }else{
-                # print(paste(r,"remove", f_corr_all$name.1[r], ", keep", f_corr_all$name[r]))
                 remove <- c(remove,f_corr_all$name.1[r])
               }
             }else{
               if(f_corr_all$name[r]%in% remove){
-                # print(paste(f_corr_all$name[r],"already being removed"))
               }else{
-                # print(paste(r,"remove", f_corr_all$name[r], ", keep", f_corr_all$name.1[r]))
                 remove <- c(remove,f_corr_all$name[r],)
               }
             }
         }
-        # print(f_corr_all)
     }else{
-      # print(paste("OK  | ", name))
     }
   }
   keep <- sub_stdev[sub_stdev$name %notin% remove,]
@@ -420,17 +258,80 @@ filter_exceedances <- function(list_data, n, corr_cut_off){
 }
 ```
 
+### Reduction
+
+1. Remove stdev columns
+
+2. rescale predictors between 0 and 100
+
+3. _mean_correlation_by_dose_response_ takes harmony input and calculates
+  - mean_corr_matrix_list, a list of correlation matrices per dose response (update this)
+  - mean_stdev_df_list, a list of stdev dataframes for each strain
+  - mean_corr_dosepair_df_list, a list of pairwise correlations between each feature
+  
+4. _filter_exceedances_ takes the result of the prior function, takes parameters to decide which features are to be selected
+
 ```{r}
-# before heatmap
+############ 1 ############
+founders_quantal_collection$all_plates <- remove_sd_vars(founders_quantal_collection$all_plates)
 
-# this function removes the least possible # of features given a one:many correlation associations
-results <- filter_exceedances(list_data = test, n = 200, corr_cut_off = 0.95)
+############ 2 ############
+rescaled_data <- retrieve_feature_df_rescaled(founders_quantal_collection$all_plates, covariates = c("dose","mouse") )
 
-# after heatmap
+############ 3 ############
+mouse_data_metrics <- mean_correlation_by_doseresponse(data = rescaled_data, 
+                                                       remove_outliers = TRUE, # currently does this by default
+                                                       group_id = 'mouse')
 
-# subset quantal data
+############ 4 ############
+corr_threshold <- 1
+results <- suppressWarnings(filter_exceedances(list_data = mouse_data_metrics, # input list object
+                                               n = 16, # maximum number of values to return
+                                               corr_cut_off = corr_threshold, # makes underlying values positive
+                                               rank_by = 'stdev') # this is the only option...
+                            ) 
 ```
 
+```{r}
+corr_matrix <- extract_mean_corr(mouse_data_metrics$mean_corr_matrix_list)
+subset_corr_matrix_data <- corr_matrix[results$keep$name,results$keep$name]
+heatmap(subset_corr_matrix_data, main = paste("Subset of features on abs-value corr value",corr_threshold))
+```
+
+```{r}
+# vals <- feature_exceedance_extraction(dr_list_object = mouse_data_metrics, corr_cut_off = 0.5, n = 15)
+# vals$name <- gsub("\\..*","",rownames(vals))
+
+#sub_stdev <- extract_mean_stdev(mouse_data_metrics$mean_stdev_df_list, n = 'all')
+corr_matrix <- extract_mean_corr(mouse_data_metrics$mean_corr_matrix_list)
+subset_corr_matrix_data <- corr_matrix[results$keep$name,results$keep$name]
+#subset_stdev<- subset(sub_stdev, rownames(sub_stdev) %in% results$keep$name)
+#equivalency_matrix <- (corr_matrix ==  1)
+
+# append_back_to_featuresdf <- function()
+# 
+# reduced_corr_matrix <- function(m){
+# 
+#   negative_correlation <- (m < 0)
+#   positive_correlation <- (m >= 0)
+#   nx <- ny <- nrow(m)
+#   
+#   makeRects <- function(tfMat,border){
+#     cAbove = expand.grid(1:nx,1:ny)[tfMat,]
+#     xl=cAbove[,1]-0.49
+#     yb=cAbove[,2]-0.49
+#     xr=cAbove[,1]+0.49
+#     yt=cAbove[,2]+0.49
+#     rect(xl,yb,xr,yt,border=border,lwd=2)
+#   }
+#   heatmap(t(m),Rowv = NA, Colv=NA, add.expr = {
+#    makeRects(negative_correlation,"red"); makeRects(positive_correlation,"green")})
+# }
+# 
+# reduced_corr_matrix(corr_matrix[results$keep$name,results$keep$name])
+#  exact_correlation <- corr_matrix[(corr_matrix %in% c(-1,1))]
+# reduced_corr_matrix(exact_correlation)
+```
 
 ## Save/overwrite RDS
 
