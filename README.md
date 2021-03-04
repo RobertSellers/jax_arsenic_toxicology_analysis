@@ -2,7 +2,7 @@
 
 # Project structure
 - data_analysis_master.Rmd contains project analysis blueprint
-- rmd organization in progress
+- See also [Box - Arsenic Project](https://thejacksonlaboratory.ent.box.com/folder/127825646279)
 
 ```
 ├── readme.md
@@ -20,5 +20,3 @@
     ├── omics
     └── validation
 ```
-
-See also [Box - Arsenic Project](https://thejacksonlaboratory.ent.box.com/folder/127825646279)
