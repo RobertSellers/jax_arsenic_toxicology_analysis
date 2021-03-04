@@ -49,19 +49,6 @@ temp_data_storage <- "founders_quantal_processed.RData"
 founders_quantal_collection <- readRDS(temp_data_storage)
 ```
 
-# Data source construction
-
-```{r}
-selected_features <- c("h2axpositive_infocus",
-                       "infocus_intensity_nucleus_alexa488_mean_mean",
-                       "infocus_intensity_cell_hoechst_mean_stdev",
-                       "infocus_cell_roundness_mean",
-                       "infocus_cell_roundness_stdev",
-                       "nuclei_numberofobjects",
-                       "infocus_numberofobjects"
-                       )
-```
-
 # Analysis
 
 ## Correlation analysis and Dimension Reduction
@@ -69,17 +56,23 @@ selected_features <- c("h2axpositive_infocus",
 ### Functions
 
 ```{r}
+# grep function that removes a pattern
+remove_sd_vars <- function(data){
+  # remove from all_plates
+  before_cols <- ncol(data$all_plates)
+  data$all_plates <- dplyr::select(data$all_plates, -dplyr::contains("stdev"))
+  print(paste("removing",(before_cols-ncol(data$all_plates)), "/", before_cols,"features"))
+  # remove from features_df
+  data$features_df <- data$features_df[!grepl("stdev", data$features_df$name_),]
+  return (data)
+}
+
 retrieve_feature_df_rescaled <- function(data, covariates){
   start_idx = grep("timepoint", colnames(data)) + 1
   end_idx = grep("number_of_analyzed_fields", colnames(data)) - 1
   all_features <- colnames(data[,start_idx:end_idx])
   data[,c(all_features)] <- lapply(data[,c(all_features)], function(x) scales::rescale(x, to = c(0.001, 99.999), from = range(x, na.rm = TRUE, finite = TRUE)))
   return (data[,c(covariates,all_features)])
-}
-
-remove_sd_vars <- function(data){
-  data <- dplyr::select(data, -dplyr::contains("stdev"))
-  return (data)
 }
 
 mean_correlation_by_doseresponse <- function(data, group_id = 'strain', remove_outliers = TRUE){
@@ -278,7 +271,7 @@ breaks = c(-1,-corr_threshold,(-corrv/2),(-corrv/3),0,(corrv/2),(corrv/3),corrv,
 
 ### Reduction
 
-1. Remove stdev columns
+1. Remove stdev columns from all_plates and feature_df
 
 2. rescale predictors between 0 and 100
 
@@ -291,7 +284,7 @@ breaks = c(-1,-corr_threshold,(-corrv/2),(-corrv/3),0,(corrv/2),(corrv/3),corrv,
 
 ```{r}
 ############ 1 ############
-founders_quantal_collection$all_plates <- remove_sd_vars(founders_quantal_collection$all_plates)
+founders_quantal_collection <- remove_sd_vars(founders_quantal_collection)
 
 ############ 2 ############
 rescaled_data <- retrieve_feature_df_rescaled(founders_quantal_collection$all_plates, covariates = c("dose","mouse") )
@@ -320,11 +313,12 @@ corr_plot_w_stdevs(subset_corr_matrix_data,
                    salvaged = results$keep,
                    stds = stdevs_subset)
 ```
+## Testing against known DRC features
 
-
-# Save/overwrite RDS
+- tbd
 
 ```{r}
+
 # selected_features <- c("h2axpositive_infocus",
 #                        "infocus_intensity_nucleus_alexa488_mean_mean",
 #                        "infocus_intensity_cell_hoechst_mean_stdev",
@@ -333,6 +327,11 @@ corr_plot_w_stdevs(subset_corr_matrix_data,
 #                        "nuclei_numberofobjects",
 #                        "infocus_numberofobjects"
 #                        )
+```
+
+# Save/overwrite RDS
+
+```{r}
 temp_data_storage <- paste0("temp_files/founders_quantal_reduced.RData")
 saveRDS(founders_quantal_collection, temp_data_storage)
 ```
