@@ -73,7 +73,7 @@ retrieve_feature_df_rescaled <- function(data, covariates){
   start_idx = grep("timepoint", colnames(data)) + 1
   end_idx = grep("number_of_analyzed_fields", colnames(data)) - 1
   all_features <- colnames(data[,start_idx:end_idx])
-  data[,c(all_features)] <- lapply(data[,c(all_features)], function(x) scale(x, center = FALSE, scale = max(x, na.rm = TRUE)/100))
+  data[,c(all_features)] <- lapply(data[,c(all_features)], function(x) scales::rescale(x, to = c(0.001, 99.999), from = range(x, na.rm = TRUE, finite = TRUE)))
   return (data[,c(covariates,all_features)])
 }
 
@@ -103,8 +103,9 @@ mean_correlation_by_doseresponse <- function(data, group_id = 'strain', remove_o
       group_by(strain, dose) %>%  # group by strain and dose - also unnecessary code
       summarise_each(funs(mean), -c(replicate)) %>% # mean of each strain per dose response change
       group_by(strain) %>%# now just group by strain
+      #filter_at(vars(-c(strain, dose)), all_vars(!(abs(. - median(.)) > 2*sd(.)))) %>% # remove outliers
       summarise_at(vars(-dose),diff) # calculate difference in mean values
-    
+   # browser()
     sub_df_stdev_per_dose_response <- data %>%
       dplyr::filter(dose %in% c(low,high)) %>% # select only values inside low and high
       separate(mouse, c("strain","replicate")) %>% # fix
@@ -122,7 +123,7 @@ mean_correlation_by_doseresponse <- function(data, group_id = 'strain', remove_o
     
     # Assign first column as the column names of the transposed dataframe
     colnames(stdev_T) <- colnames(mean_T) <- names
-    res2<-Hmisc::rcorr(as.matrix(t(mean_T)))
+    res2<-Hmisc::rcorr(as.matrix(t(mean_T)), type="spearman")
     ut <- upper.tri(res2$r)
     
     features_a <- rownames(res2$r)[row(res2$r)[ut]]
@@ -169,15 +170,6 @@ extract_mean_corr <- function(corr_list){
   
 }
 
-remove_outliers <- function(x, na.rm = TRUE, ...) {
-  qnt <- quantile(x, probs=c(.05, .95), na.rm = na.rm, ...)
-  H <- 1.5 * IQR(x, na.rm = na.rm)
-  y <- x
-  y[x < (qnt[1] - H)] <- NA
-  y[x > (qnt[2] + H)] <- NA
-  y
-}
-
 feature_exceedance_extraction <- function(dr_list_object, corr_cut_off = .99, n = 25){
 
   # use this again later to fill the void
@@ -204,7 +196,6 @@ subset_corr_matrix <- function(avg_corr_mat, avg_std_mat, all_features, corr_cut
     
     m <- as.matrix(corr_df_mean_subset)
     
-    # ought to change this to a range? eg c(-0.9:0.9)
     correlations <- which( abs(m) > corr_cut_off, arr.ind=T )
     vals <- correlations[correlations[, 1] != correlations[, 2], ]
     vals <- as.data.frame(cbind(vals,correlation=m[vals]))
@@ -256,6 +247,33 @@ filter_exceedances <- function(list_data, n, corr_cut_off, rank_by){
   print(paste("salvaging", nrow(keep),"/",n,"features"))
   return (list("keep"=keep,"remove"=remove))
 }
+
+corr_plot_w_stdevs <- function(m, n, corrv, salvaged, stds){
+    par(cex.main=0.75)
+    colrange <- c("grey",colorRampPalette(c("orange", "yellow"))(3),colorRampPalette(c("cyan", "blue"))(3), "grey")
+    gplots::heatmap.2( m, 
+                     Rowv=FALSE, 
+                     Colv=FALSE, 
+                     symm = TRUE,
+                     main = paste0("corr value threshold < ",corrv, ", n = ", nrow(salvaged), "/", n),
+                     dendrogram='none', 
+                     cellnote=round(m,2), 
+                     notecol="black",  
+                     notecex = 0.75,
+                     cexRow = 1/log10(nrow(m))-0.3,
+                     cexCol = 1/log10(ncol(m))-0.3,
+                     srtCol=345,  
+                     adjCol = c(0,1),
+                     labCol = paste(toupper(letters[1:nrow(m)])," | ",rownames(m)),
+                     labRow =   paste(toupper(letters[1:nrow(m)])," | ",paste0("mu stdev: ", round(stds$sdmeans,2))),
+                     col =  colrange,
+                     trace='none', 
+                     key=FALSE,
+breaks = c(-1,-corr_threshold,(-corrv/2),(-corrv/3),0,(corrv/2),(corrv/3),corrv,1),
+                       lwid = c(0.2,20),
+                       lhei = c(4,15),
+                     margins = c(5,8))
+} 
 ```
 
 ### Reduction
@@ -280,62 +298,41 @@ rescaled_data <- retrieve_feature_df_rescaled(founders_quantal_collection$all_pl
 
 ############ 3 ############
 mouse_data_metrics <- mean_correlation_by_doseresponse(data = rescaled_data, 
-                                                       remove_outliers = TRUE, # currently does this by default
+                                                       remove_outliers = TRUE, # no alternative so far
                                                        group_id = 'mouse')
 
 ############ 4 ############
-corr_threshold <- 1
+corr_threshold <- 0.85
+n <- 35
 results <- suppressWarnings(filter_exceedances(list_data = mouse_data_metrics, # input list object
-                                               n = 16, # maximum number of values to return
+                                               n = n, # maximum number of values to return
                                                corr_cut_off = corr_threshold, # makes underlying values positive
                                                rank_by = 'stdev') # this is the only option...
                             ) 
-```
 
-```{r}
 corr_matrix <- extract_mean_corr(mouse_data_metrics$mean_corr_matrix_list)
 subset_corr_matrix_data <- corr_matrix[results$keep$name,results$keep$name]
-heatmap(subset_corr_matrix_data, main = paste("Subset of features on abs-value corr value",corr_threshold))
+stds <- extract_mean_stdev(mouse_data_metrics$mean_stdev_df_list)
+stdevs_subset <- subset(stds, rownames(stds) %in% results$keep$name)
+corr_plot_w_stdevs(subset_corr_matrix_data,
+                   n,
+                   corr_threshold, 
+                   salvaged = results$keep,
+                   stds = stdevs_subset)
 ```
 
-```{r}
-# vals <- feature_exceedance_extraction(dr_list_object = mouse_data_metrics, corr_cut_off = 0.5, n = 15)
-# vals$name <- gsub("\\..*","",rownames(vals))
 
-#sub_stdev <- extract_mean_stdev(mouse_data_metrics$mean_stdev_df_list, n = 'all')
-corr_matrix <- extract_mean_corr(mouse_data_metrics$mean_corr_matrix_list)
-subset_corr_matrix_data <- corr_matrix[results$keep$name,results$keep$name]
-#subset_stdev<- subset(sub_stdev, rownames(sub_stdev) %in% results$keep$name)
-#equivalency_matrix <- (corr_matrix ==  1)
-
-# append_back_to_featuresdf <- function()
-# 
-# reduced_corr_matrix <- function(m){
-# 
-#   negative_correlation <- (m < 0)
-#   positive_correlation <- (m >= 0)
-#   nx <- ny <- nrow(m)
-#   
-#   makeRects <- function(tfMat,border){
-#     cAbove = expand.grid(1:nx,1:ny)[tfMat,]
-#     xl=cAbove[,1]-0.49
-#     yb=cAbove[,2]-0.49
-#     xr=cAbove[,1]+0.49
-#     yt=cAbove[,2]+0.49
-#     rect(xl,yb,xr,yt,border=border,lwd=2)
-#   }
-#   heatmap(t(m),Rowv = NA, Colv=NA, add.expr = {
-#    makeRects(negative_correlation,"red"); makeRects(positive_correlation,"green")})
-# }
-# 
-# reduced_corr_matrix(corr_matrix[results$keep$name,results$keep$name])
-#  exact_correlation <- corr_matrix[(corr_matrix %in% c(-1,1))]
-# reduced_corr_matrix(exact_correlation)
-```
-
-## Save/overwrite RDS
+# Save/overwrite RDS
 
 ```{r}
+# selected_features <- c("h2axpositive_infocus",
+#                        "infocus_intensity_nucleus_alexa488_mean_mean",
+#                        "infocus_intensity_cell_hoechst_mean_stdev",
+#                        "infocus_cell_roundness_mean",
+#                        "infocus_cell_roundness_stdev",
+#                        "nuclei_numberofobjects",
+#                        "infocus_numberofobjects"
+#                        )
 temp_data_storage <- paste0("temp_files/founders_quantal_reduced.RData")
 saveRDS(founders_quantal_collection, temp_data_storage)
 ```
