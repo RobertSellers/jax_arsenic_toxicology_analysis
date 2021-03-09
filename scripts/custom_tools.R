@@ -12,21 +12,21 @@ testInteger <- function(x){
 }
 
 # see http://rstudio-pubs-static.s3.amazonaws.com/1563_1ae2544c0e324b9bb7f6e63cf8f9e098.html
-log_skew_transform <- function(response_var) {
-  skew_val <- e1071::skewness(response_var)
-  skew.score <- function(c, x)
-    (e1071::skewness(log(x + c))) ^ 2
-  if (!is.na(skew_val)) {
-    print(paste0("performing log transformation with skew:", skew_val))
-    best.c <- optimise(skew.score, c(0, 20), x = response_var)$minimum
-    response_var <- log(response_var + best.c)
-  } else{
-    print("No optimization possible")
-    # to be continued
-    #df$response <- log(df$response)
-  }
-  return(response_var)
-}
+# log_skew_transform <- function(response_var = 'response') {
+#   skew_val <- e1071::skewness(response_var)
+#   skew.score <- function(c, x)
+#     (e1071::skewness(log(x + c))) ^ 2
+#   if (!is.na(skew_val)) {
+#     print(paste0("performing log transformation with skew:", skew_val))
+#     best.c <- optimise(skew.score, c(0, 20), x = response_var)$minimum
+#     response_var <- log(response_var + best.c)
+#   } else{
+#     print("No optimization possible")
+#     # to be continued
+#     #df$response <- log(df$response)
+#   }
+#   return(response_var)
+# }
 
 # ensure all NA values are the same
 is.nan.data.frame <- function(x){
@@ -46,3 +46,8 @@ not_any_na <- function(x) all(!is.na(x))
 
 # for pipes
 `%notin%` <- Negate(`%in%`)
+
+VLookup <- function(this, data, key, value) {
+  m <- match(this, data[[key]])
+  data[[value]][m]
+}
