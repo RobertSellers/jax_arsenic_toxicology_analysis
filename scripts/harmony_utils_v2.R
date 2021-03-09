@@ -20,6 +20,7 @@ plate_class <- function(index, plate_df, cells_df, plate_metadata, plate_dir){
 plate_collection_class <- function(list_of_plates){
   
   self.all_plates = do.call(plyr::rbind.fill, lapply(list_of_plates, function(x) {x$plate_df}))
+  self.all_plates = colname_condense(self.all_plates) # bulk rename function
   self.index = do.call(plyr::rbind.fill, lapply(list_of_plates, function(x) {x$index}))
   self.all_cells = do.call(plyr::rbind.fill, lapply(list_of_plates, function(x) {x$cells_df}))
   self.feature_df = feature_columns_analyze(self.all_plates)
@@ -187,34 +188,75 @@ feature_columns_analyze <- function(df){
   start_idx = grep("timepoint", colnames(df)) + 1
   end_idx = grep("number_of_analyzed_fields", colnames(df)) - 1
   for (feature in colnames(df[,start_idx:end_idx])){
-  
-  temp_feature <- df %>%
-    select_(feature)
-  f <- temp_feature[,1]
-  
-  name_ <- feature
-  total_ <- nrow(temp_feature)
-  na_count_ <- sum(is.na(f))
-  median_ <- signif(as.numeric(median(f,na.rm=TRUE)), 3)
-  max_ <- signif(as.numeric(max(f,na.rm=TRUE)), 3)
-  min_ <- signif(as.numeric(min(f,na.rm=TRUE)), 3)
-  integer_ <- testInteger(f) 
+    
+    temp_feature <- df %>%
+      select_(feature)
+    f <- temp_feature[,1]
+    
+    name_ <- feature
+    total_ <- nrow(temp_feature)
+    na_count_ <- sum(is.na(f))
+    median_ <- signif(as.numeric(median(f,na.rm=TRUE)), 3)
+    max_ <- signif(as.numeric(max(f,na.rm=TRUE)), 3)
+    min_ <- signif(as.numeric(min(f,na.rm=TRUE)), 3)
+    integer_ <- testInteger(f) 
 
-  try({
-    # https://www.rdocumentation.org/packages/NCmisc/versions/1.1.6/topics/which.outlier
-     # outlier_ <- which.outlier(f, thr = 5, method = "sd", high = TRUE,low = TRUE)
-     # print(outlier_)
-    })
-  
-  features_df <- rbind(features_df, data.frame(
-    name_,
-    integer_,
-    total_,
-    na_count_,
-    median_,
-    min_,
-    max_
-  ))
+    
+    features_df <- rbind(features_df, data.frame(
+      name_,
+      integer_,
+      total_,
+      na_count_,
+      median_,
+      min_,
+      max_
+    ))
   }
   return (features_df)
+}
+
+
+colname_condense <- function(df){
+  df <- df %>%
+    rename_at(.vars = vars(ends_with("_per_well")),
+              .funs = funs(sub("[_]per_well$", "", .))) %>%
+    rename_at(.vars = vars(ends_with("_cells_cells")),
+              .funs = funs(sub("[_]cells_cells$", "cells", .))) %>%
+    rename_at(.vars = vars(contains("1_px")),
+              .funs = funs(sub("1_px", "1px", .))) %>%
+    rename_at(.vars = vars(contains("hoechst_33342")),
+            .funs = funs(sub("hoechst_33342", "hoechst", .))) %>%
+    rename_at(.vars = vars(contains("alexa_488")),
+            .funs = funs(sub("alexa_488", "alexa488", .))) %>%
+    rename_at(.vars = vars(contains("mito_tracker_deep_red")),
+            .funs = funs(sub("mito_tracker_deep_red", "mitotrackerdeepred", .))) %>%
+    rename_at(.vars = vars(contains("_number_of_objects")),
+              .funs = funs(sub("_number_of_objects", "_numberofobjects", .))) %>%
+    rename_at(.vars = vars(contains("std_dev")),
+            .funs = funs(sub("std_dev", "stdev", .))) %>%
+    rename_at(.vars = vars(contains("_pos_")),
+            .funs = funs(sub("[_]pos[_]", "_positive_", .))) %>%
+    rename_at(.vars = vars(contains("_neg_")),
+            .funs = funs(sub("[_]neg[_]", "_negative_", .))) %>%
+    rename_at(.vars = vars(contains("out_focus")),
+            .funs = funs(sub("out_focus", "outfocus", .))) %>%
+    rename_at(.vars = vars(contains("in_focus")),
+          .funs = funs(sub("in_focus", "infocus", .))) %>%
+    rename_at(.vars = vars(contains("number_of_spots")),
+        .funs = funs(sub("number_of_spots", "numberofspots", .))) %>%
+    rename_at(.vars = vars(contains("h2ax_positive")),
+        .funs = funs(sub("h2ax_positive", "h2axpositive", .))) %>%
+    rename_at(.vars = vars(contains("h2ax_negative")),
+        .funs = funs(sub("h2ax_negative", "h2axnegative", .))) %>%
+    distinct()
+  return (df)
+}
+
+# subset columns with predictors
+# expects these specific columns
+query_features <- function(data){
+  start_idx = grep("timepoint", colnames(data)) + 1
+  end_idx = grep("number_of_analyzed_fields", colnames(data)) - 1
+  all_features <- colnames(data[,start_idx:end_idx])
+  return(all_features)
 }

@@ -50,47 +50,16 @@ library(ggpubr) # ggplot extension
 setwd("data/discovery_invitro/")
 selected_dir <- "./founders_quantal"
 # Warning - this currently expects a temp_files data dir 
-founders_quantal_collection <- harmony_create_collection(
-                                dir = selected_dir,
-                                overwrite = FALSE) 
+# Set overwrite to TRUE when underlying data dir has been changed
+founders_quantal_collection <- harmony_create_collection(dir = selected_dir, overwrite = TRUE)
+#do_focus_collection <- harmony_create_collection(dir = './do_focus',overwrite = TRUE) 
 ```
 
 ## Data treatments
 
 ```{r warning = FALSE}
 # consult https://cran.r-project.org/web/packages/janitor/vignettes/janitor.html
-founders_quantal_collection$all_plates <- founders_quantal_collection$all_plates %>%
-  rename_at(.vars = vars(ends_with("_per_well")),
-            .funs = funs(sub("[_]per_well$", "", .))) %>%
-  rename_at(.vars = vars(ends_with("_cells_cells")),
-            .funs = funs(sub("[_]cells_cells$", "cells", .))) %>%
-  rename_at(.vars = vars(contains("1_px")),
-            .funs = funs(sub("1_px", "1px", .))) %>%
-  rename_at(.vars = vars(contains("hoechst_33342")),
-          .funs = funs(sub("hoechst_33342", "hoechst", .))) %>%
-  rename_at(.vars = vars(contains("alexa_488")),
-          .funs = funs(sub("alexa_488", "alexa488", .))) %>%
-  rename_at(.vars = vars(contains("mito_tracker_deep_red")),
-          .funs = funs(sub("mito_tracker_deep_red", "mitotrackerdeepred", .))) %>%
-  rename_at(.vars = vars(contains("_number_of_objects")),
-            .funs = funs(sub("_number_of_objects", "_numberofobjects", .))) %>%
-  rename_at(.vars = vars(contains("std_dev")),
-          .funs = funs(sub("std_dev", "stdev", .))) %>%
-  rename_at(.vars = vars(contains("_pos_")),
-          .funs = funs(sub("[_]pos[_]", "_positive_", .))) %>%
-  rename_at(.vars = vars(contains("_neg_")),
-          .funs = funs(sub("[_]neg[_]", "_negative_", .))) %>%
-  rename_at(.vars = vars(contains("out_focus")),
-          .funs = funs(sub("out_focus", "outfocus", .))) %>%
-  rename_at(.vars = vars(contains("in_focus")),
-        .funs = funs(sub("in_focus", "infocus", .))) %>%
-  rename_at(.vars = vars(contains("number_of_spots")),
-      .funs = funs(sub("number_of_spots", "numberofspots", .))) %>%
-  rename_at(.vars = vars(contains("h2ax_positive")),
-      .funs = funs(sub("h2ax_positive", "h2axpositive", .))) %>%
-  rename_at(.vars = vars(contains("h2ax_negative")),
-      .funs = funs(sub("h2ax_negative", "h2axnegative", .))) %>%
-  distinct() %>% # just in case
+founders_quantal_collection$all_plates <- founders_quantal_collection$all_plates %>% 
   dplyr::rename(
     strain = cell_type, 
     dose = concentration
@@ -132,16 +101,49 @@ founders_quantal_collection$all_plates <- founders_quantal_collection$all_plates
          mouse == 'B6_2F' ~ 'B6_F2',
          TRUE ~ mouse)
      ) %>%
-  # reorder everything nicely
   dplyr::select(plate,row,column,dose,strain,sex,mouse, everything())
-
-# replace metadata columns -- misaligned now due to large # of edits
-start_idx = grep("timepoint", colnames(founders_quantal_collection$all_plates)) + 1
-end_idx = grep("number_of_analyzed_fields", colnames(founders_quantal_collection$all_plates)) - 1
-founders_quantal_collection$features_df$name_ <- colnames(founders_quantal_collection$all_plates[,start_idx:end_idx])
 ```
 
-## Save/overwrite RDS
+## Coordinated feature metadata
+- associates annotated info (e.g. stain)
+- removes data not represented in both founders + DO based on vlookup in google sheet
+
+```{r}
+# pseudo database solution
+# you can't do this too frequently < every 2 minutes or so
+feature_metadata <- googlesheets4::read_sheet(ss = "1A6qMVGhtJykfbCQK1qq0qv5w3HfKvs8ByVSCiExc49s", sheet = 'founders_quantal') 
+
+# remove unmatched features from all_plates
+# this doesn't seem necessary for Founders but will need for DO
+founders_quantal_collection$all_plates <- founders_quantal_collection$all_plates %>% select (-feature_metadata$name_[feature_metadata$mutuality==FALSE])
+
+# remove unmatched features from features metadata (if applicable)
+founders_quantal_collection$features_df <- founders_quantal_collection$features_df %>%
+  left_join(feature_metadata[,c("name_","stain","mutuality")], "name_") %>%
+  filter(mutuality) %>% # TRUE/FALSE if in DO and vice versa
+  select(-mutuality)
+```
+
+## Remove STDEV data
+- Targets both all_plates & feature_df currently
+
+```{r}
+# grep function that removes a pattern
+remove_sd_vars <- function(data){
+  # remove from all_plates
+  before_cols <- ncol(data$all_plates)
+  data$all_plates <- dplyr::select(data$all_plates, -dplyr::contains("stdev"))
+  print(paste("removing",(before_cols-ncol(data$all_plates)), "/", before_cols,"features"))
+  # remove from features_df
+  data$features_df <- data$features_df[!grepl("stdev", data$features_df$name_),]
+  return (data)
+}
+
+# remove columns / features with pattern "stdev"
+founders_quantal_collection <- remove_sd_vars(founders_quantal_collection)
+```
+
+# Save/overwrite RDS
 
 ```{r}
 temp_data_storage <- paste0("temp_files/",selected_dir,'_processed.RData')
