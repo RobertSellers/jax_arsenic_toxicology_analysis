@@ -332,7 +332,7 @@ feature_reduction_lplot <- function(mouse_metrics, results){
   n <- results$parameters$target_n
   
   sd_df_all <- extract_mean_stdev(mouse_metrics$mean_stdev_df_list,
-          n = nrow(mouse_metrics$mean_stdev_df_list$interval_0_0.1)) # fix this
+          n = results$parameters$max_n) 
   # rescale sd_means so easier to see in plot
   sd_df_all$sdmeans <- scales::rescale(sd_df_all$sdmeans, to = c(0, max(sd_df_all)))
   
@@ -358,12 +358,16 @@ feature_reduction_lplot <- function(mouse_metrics, results){
   ss_sd_df_all_melt$vesting <- plyr::mapvalues(ss_sd_df_all_melt$vesting,
             from=c("TRUE","FALSE","good"),
             to=new_vals)
-  linetypes <- c("Disqualified_STDev" = 'solid',"Disqualified_corr" = 'dotted',"Qualified_Distinct"='solid')
-  alphatypes <- c("Disqualified_STDev" = .1,"Disqualified_corr" = 1,"Qualified_Distinct"=1)
-  colortypes <- c("Disqualified_STDev" = 'black',"Disqualified_corr" = 'white',"Qualified_Distinct"='#d60400')
-sizetypes <- c("Disqualified_STDev" = 0.1,"Disqualified_corr" = 0.1,"Qualified_Distinct"=1)
-  # manually sort vesting column for line symbol order
+  linetypes <- c("Disqualified_STDev" = 'solid',"Disqualified_corr" = 'dotted',"Qualified_Distinct" = 'solid')
+  alphatypes <- c("Disqualified_STDev" = .1,"Disqualified_corr" = 1, "Qualified_Distinct" = 1)
+  colortypes <- c("Disqualified_STDev" = 'black',"Disqualified_corr" = 'white', "Qualified_Distinct" = '#d60400')
+sizetypes <- c("Disqualified_STDev" = 0.1,"Disqualified_corr" = 0.1,"Qualified_Distinct" = 1)
 
+  new_labs <- sub("_"," - ",sub("^[^_]*_", "", colnames(sd_df_all)))
+  x_lab_labels <- c(new_labs[-length(new_labs)],"scaled mean")
+  names(x_lab_labels) <- colnames(sd_df_all)
+  
+  # manually sort vesting column for line symbol order
   ss_sd_df_all_melt$vesting <- factor(ss_sd_df_all_melt$vesting)
   ss_sd_df_all_melt$vesting<- factor( as.character(  ss_sd_df_all_melt$vesting), levels=new_vals[c(2,3,1)])
 
@@ -381,30 +385,19 @@ sizetypes <- c("Disqualified_STDev" = 0.1,"Disqualified_corr" = 0.1,"Qualified_D
       linetype = vesting,
       color = vesting
     )) + 
-    # 1 a_fail, 2 b_fail, 3 c_pass
-    scale_linetype_manual(values=linetypes) +
+    scale_linetype_manual(values=linetypes) + #does this work?
     scale_size_manual(values = sizetypes) +
     scale_alpha_manual(values=alphatypes) +
     scale_color_manual(values=colortypes) +
     scale_x_discrete(
-      # breaks=c("sd_0_0.1", "sd_0.1_0.5", "sd_0.5_1",
-      #          "sd_1_2","sd_2_3","sd_3_4","sd_4_5","sdmeans"),
-      labels=c(
-      "sd_0_0.1" = "0 - 0.1",
-      "sd_0.1_0.5" = "0.1 - 0.5",
-      "sd_0.5_1" = "0.5 - 1",
-      "sd_1_2" = "1 - 2",
-      "sd_2_3" = "2 - 3",
-      "sd_3_4" = "3 - 4",
-      "sd_4_5" = "4 - 5",
-      "sdmeans" = "rescale(mean)"
-      ))+ theme_dark() +
+      labels=x_lab_labels
+    ) +
+  theme_dark() +
   theme(legend.position='top', 
         legend.justification='left',
         legend.title=element_blank(),
-        legend.direction='horizontal') #+
-#annotate("label", x = 0, y = 0, label = "avg rate") 
-return (gg)
+        legend.direction='horizontal') 
+  return (gg)
 }
 ```
 
@@ -437,7 +430,7 @@ mouse_metrics <- mean_correlation_by_doseresponse(data = rescaled_data_list,  gr
 ############ 3 ############
 results <- suppressWarnings(filter_exceedances(list_data = mouse_metrics, # input list object
                                                n = 25, # maximum number of values to return
-                                               corr_cut_off = 0.6, # makes underlying values positive
+                                               corr_cut_off = 0.3, # makes underlying values positive
                                                rank_by = 'stdev')) # this is the only current option
 
 ############ 4 ############
@@ -458,9 +451,7 @@ gg <-feature_reduction_lplot(mouse_metrics = mouse_metrics, results = results)
 gg
 ```
 
-## Flag / inform the above data choices
-
-- tbd
+## Flag / inform the above data selection
 
 ```{r}
 custom_feature_selection <- c("h2axpositive_infocus",
