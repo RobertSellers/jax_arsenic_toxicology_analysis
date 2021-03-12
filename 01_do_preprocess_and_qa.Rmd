@@ -1,0 +1,155 @@
+---
+title: "Founders #1 Preprocess and QA"
+author:
+- name: Robert Sellers
+  affiliation: The Jackson Laboratory
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
+abstract: |
+latex_engine: pdflatex
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    number_sections: true
+    theme: lumen
+    toc: yes
+    toc_float: yes
+    df_print: paged
+    # code_folding: "hide"
+  pdf_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pyments
+    keep_tex: yes
+    latex_engine: xelatex
+    number_sections: no
+    toc: no
+    
+---
+
+# Programming environment
+
+```{r message=FALSE}
+# contains harmony plate collection class builder
+source("scripts/harmony_utils_v2.R")
+# various add-on scripts and stats tools
+source("scripts/custom_tools.R")
+
+library(tidyverse)
+library(janitor)
+library(ggplot2) 
+library(ggpubr) # ggplot extension
+```
+
+# Load data
+
+## Build plate collection from directory
+
+```{r warning=FALSE, echo = FALSE}
+# point to parent data directory
+setwd("data/discovery_invitro/")
+selected_dir <- "./founders_quantal"
+# Warning - this currently expects a temp_files data dir 
+# Set overwrite to TRUE when underlying data dir has been changed
+founders_quantal_collection <- harmony_create_collection(dir = selected_dir, overwrite = TRUE)
+#do_focus_collection <- harmony_create_collection(dir = './do_focus',overwrite = TRUE) 
+```
+
+## Data treatments
+
+```{r warning = FALSE}
+# consult https://cran.r-project.org/web/packages/janitor/vignettes/janitor.html
+founders_quantal_collection$all_plates <- founders_quantal_collection$all_plates %>% 
+  dplyr::rename(
+    strain = cell_type, 
+    dose = concentration
+    ) %>%
+  mutate(
+    plate = case_when(
+           dir=="dFounders_A1_Whole_New__20200115T13_25_19Measurement_1_e1" ~ "A1",
+           dir=="dFounders_B1_Whole__20200103T10_34_56Measurement_1_e3" ~ "B1",
+           dir=="dFounders_AA1__20200113T14_27_40Measurement_1_e3" ~ "AA1",
+           dir=="dFounders_BB1__20200114T09_14_08Measurement_1_e3" ~ "BB1",
+           dir=="dFounders_CC1__20200115T09_21_08Measurement_1_e3" ~ "CC1",
+           dir=="dFounders_D1_Whole__20191230T13_52_41Measurement_1_e2" ~ "D1",
+           dir=="dFounders_DD1__20200114T13_08_38Measurement_1_e3" ~ "DD1",
+           dir=="dFounders_E1_Whole__20200102T08_52_12Measurement_1_e4" ~ "E1",
+           dir=="dFounders_C1_Whole__20191230T10_37_26Measurement_1_e2" ~ "C1"
+         )
+    ) %>%
+  filter((plate == 'B1' & mouse != "PWK_2F") | plate != 'B1') %>%
+  # remove duplicates
+  filter(mouse %notin% c("AJ_2F", "B6_2F")) %>%
+  mutate(sex = case_when(plate == 'D1' ~ "F",TRUE ~ as.character(sex))) %>%
+  # need to confirm this again on harmony
+  mutate(strain = if_else(is.na(strain) & plate == 'A1', "CAST", strain)) %>%
+  mutate(
+    strain = factor(strain),
+    sex = factor(sex),
+    dose = factor(dose))  %>% 
+  mutate(mouse = case_when(
+         mouse == 'CAST_2M' ~ "CAST_M2",
+         mouse == 'CAST_2F' ~ 'CAST_F2',
+         mouse == 'AJ_2M' ~ 'AJ_M2',
+         mouse == 'AJ_2F' ~ 'AJ_F2',
+         mouse == 'B6_2M' ~ 'B6_M2',
+         mouse == 'PWK_2F' ~ 'PWK_F2',
+         mouse == '129_2F' ~ '129_F2',
+         mouse == 'NOD_2M' ~ 'NOD_M2',
+         mouse == 'NOD_2F' ~ 'NOD_F2',
+         mouse == 'PWK_2M' ~ 'PWK_M2',
+         mouse == 'B6_2F' ~ 'B6_F2',
+         TRUE ~ mouse)
+     ) %>%
+  dplyr::select(plate,row,column,dose,strain,sex,mouse, everything())
+```
+
+## Coordinated feature metadata
+- associates annotated info (e.g. stain)
+- removes data not represented in both founders + DO based on vlookup in google sheet
+
+```{r}
+# pseudo database solution
+# you can't do this too frequently < every 2 minutes or so
+feature_metadata <- googlesheets4::read_sheet(ss = "1A6qMVGhtJykfbCQK1qq0qv5w3HfKvs8ByVSCiExc49s", sheet = 'founders_quantal') 
+
+# remove unmatched features from all_plates
+# this doesn't seem necessary for Founders but will need for DO
+founders_quantal_collection$all_plates <- founders_quantal_collection$all_plates %>% select (-feature_metadata$name_[feature_metadata$mutuality==FALSE])
+
+# remove unmatched features from features metadata (if applicable)
+founders_quantal_collection$features_df <- founders_quantal_collection$features_df %>%
+  left_join(feature_metadata[,c("name_","stain","mutuality")], "name_") %>%
+  filter(mutuality) %>% # TRUE/FALSE if in DO and vice versa
+  select(-mutuality)
+```
+
+## Remove STDEV data
+- Targets both all_plates & feature_df currently
+
+```{r}
+# grep function that removes a pattern
+remove_sd_vars <- function(data){
+  # remove from all_plates
+  before_cols <- ncol(data$all_plates)
+  data$all_plates <- dplyr::select(data$all_plates, -dplyr::contains("stdev"))
+  print(paste("removing",(before_cols-ncol(data$all_plates)), "/", before_cols,"features"))
+  # remove from features_df
+  data$features_df <- data$features_df[!grepl("stdev", data$features_df$name_),]
+  return (data)
+}
+
+# remove columns / features with pattern "stdev"
+founders_quantal_collection <- remove_sd_vars(founders_quantal_collection)
+```
+
+# Save/overwrite RDS
+
+```{r}
+temp_data_storage <- paste0("temp_files/",selected_dir,'_processed.RData')
+saveRDS(founders_quantal_collection, temp_data_storage)
+```
+
+---
+
+- __Continue this pipeline with founders_data_transform.rmd and while using the _processed.RData_ dataset__
