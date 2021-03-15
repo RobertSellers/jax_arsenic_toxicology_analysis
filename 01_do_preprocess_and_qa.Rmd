@@ -1,5 +1,5 @@
 ---
-title: "Founders #1 Preprocess and QA"
+title: "DO #1 Preprocess and QA"
 author:
 - name: Robert Sellers
   affiliation: The Jackson Laboratory
@@ -48,77 +48,46 @@ library(ggpubr) # ggplot extension
 ```{r warning=FALSE, echo = FALSE}
 # point to parent data directory
 setwd("data/discovery_invitro/")
-selected_dir <- "./founders_quantal"
+selected_dir <- "./do_focus"
 # Warning - this currently expects a temp_files data dir 
 # Set overwrite to TRUE when underlying data dir has been changed
-founders_quantal_collection <- harmony_create_collection(dir = selected_dir, overwrite = TRUE)
-#do_focus_collection <- harmony_create_collection(dir = './do_focus',overwrite = TRUE) 
+do_focus_collection <- harmony_create_collection(dir = './do_focus',overwrite = FALSE) 
 ```
 
 ## Data treatments
 
 ```{r warning = FALSE}
 # consult https://cran.r-project.org/web/packages/janitor/vignettes/janitor.html
-founders_quantal_collection$all_plates <- founders_quantal_collection$all_plates %>% 
+do_focus_collection$all_plates <- do_focus_collection$all_plates %>% 
   dplyr::rename(
-    strain = cell_type, 
+    #strain = cell_type, individual not strain 
     dose = concentration
     ) %>%
-  mutate(
-    plate = case_when(
-           dir=="dFounders_A1_Whole_New__20200115T13_25_19Measurement_1_e1" ~ "A1",
-           dir=="dFounders_B1_Whole__20200103T10_34_56Measurement_1_e3" ~ "B1",
-           dir=="dFounders_AA1__20200113T14_27_40Measurement_1_e3" ~ "AA1",
-           dir=="dFounders_BB1__20200114T09_14_08Measurement_1_e3" ~ "BB1",
-           dir=="dFounders_CC1__20200115T09_21_08Measurement_1_e3" ~ "CC1",
-           dir=="dFounders_D1_Whole__20191230T13_52_41Measurement_1_e2" ~ "D1",
-           dir=="dFounders_DD1__20200114T13_08_38Measurement_1_e3" ~ "DD1",
-           dir=="dFounders_E1_Whole__20200102T08_52_12Measurement_1_e4" ~ "E1",
-           dir=="dFounders_C1_Whole__20191230T10_37_26Measurement_1_e2" ~ "C1"
-         )
-    ) %>%
-  filter((plate == 'B1' & mouse != "PWK_2F") | plate != 'B1') %>%
-  # remove duplicates
-  filter(mouse %notin% c("AJ_2F", "B6_2F")) %>%
-  mutate(sex = case_when(plate == 'D1' ~ "F",TRUE ~ as.character(sex))) %>%
-  # need to confirm this again on harmony
-  mutate(strain = if_else(is.na(strain) & plate == 'A1', "CAST", strain)) %>%
-  mutate(
-    strain = factor(strain),
-    sex = factor(sex),
-    dose = factor(dose))  %>% 
-  mutate(mouse = case_when(
-         mouse == 'CAST_2M' ~ "CAST_M2",
-         mouse == 'CAST_2F' ~ 'CAST_F2',
-         mouse == 'AJ_2M' ~ 'AJ_M2',
-         mouse == 'AJ_2F' ~ 'AJ_F2',
-         mouse == 'B6_2M' ~ 'B6_M2',
-         mouse == 'PWK_2F' ~ 'PWK_F2',
-         mouse == '129_2F' ~ '129_F2',
-         mouse == 'NOD_2M' ~ 'NOD_M2',
-         mouse == 'NOD_2F' ~ 'NOD_F2',
-         mouse == 'PWK_2M' ~ 'PWK_M2',
-         mouse == 'B6_2F' ~ 'B6_F2',
-         TRUE ~ mouse)
-     ) %>%
-  dplyr::select(plate,row,column,dose,strain,sex,mouse, everything())
+  add_column(sex = NA, .after="individual") %>%
+  filter(dir %notin% c("dC20244_A1__20200918T11_06_17Measurement_1_e6",
+                         "dC20244_A2__20200914T11_13_52Measurement_1_e6",
+                         "dC20244_B1__20200914T09_49_07Measurement_2_e6",
+                         "dC20244_B2__20200918T09_22_05Measurement_1_e6")) %>%
+  filter(dose != 0.5, individual != '11_20') %>%
+  mutate(mouse = paste0(gsub('_','[.]',individual),"_", plate)) %>%
+  dplyr::select(plate,row,column,dose,sex,individual, mouse, everything())
 ```
 
 ## Coordinated feature metadata
-- associates annotated info (e.g. stain)
+- associates annotated info (e.g. individual)
 - removes data not represented in both founders + DO based on vlookup in google sheet
 
 ```{r}
 # pseudo database solution
 # you can't do this too frequently < every 2 minutes or so
-feature_metadata <- googlesheets4::read_sheet(ss = "1A6qMVGhtJykfbCQK1qq0qv5w3HfKvs8ByVSCiExc49s", sheet = 'founders_quantal') 
+feature_metadata <- googlesheets4::read_sheet(ss = "1A6qMVGhtJykfbCQK1qq0qv5w3HfKvs8ByVSCiExc49s", sheet = 'founders_quantal') # problem with DO vs Founders here
 
 # remove unmatched features from all_plates
 # this doesn't seem necessary for Founders but will need for DO
-founders_quantal_collection$all_plates <- founders_quantal_collection$all_plates %>% select (-feature_metadata$name_[feature_metadata$mutuality==FALSE])
+do_focus_collection$all_plates <- do_focus_collection$all_plates %>% select (-feature_metadata$name_[feature_metadata$mutuality==FALSE])
 
 # remove unmatched features from features metadata (if applicable)
-founders_quantal_collection$features_df <- founders_quantal_collection$features_df %>%
+do_focus_collection$features_df <- do_focus_collection$features_df %>%
   left_join(feature_metadata[,c("name_","stain","mutuality")], "name_") %>%
   filter(mutuality) %>% # TRUE/FALSE if in DO and vice versa
   select(-mutuality)
@@ -140,16 +109,90 @@ remove_sd_vars <- function(data){
 }
 
 # remove columns / features with pattern "stdev"
-founders_quantal_collection <- remove_sd_vars(founders_quantal_collection)
+do_focus_collection <- remove_sd_vars(do_focus_collection)
 ```
 
-# Save/overwrite RDS
+## Save/overwrite
+
+### RDS object
 
 ```{r}
 temp_data_storage <- paste0("temp_files/",selected_dir,'_processed.RData')
-saveRDS(founders_quantal_collection, temp_data_storage)
+saveRDS(do_focus_collection, temp_data_storage)
+```
+
+### Platemap object
+
+- improve and move this to scripts
+
+```{r}
+generate_platemap <- function(df){
+  # creates data useable with platetools functions
+  df <- df %>%
+    mutate(row = toupper(letters[row]),
+           column = sprintf("%02d", column),
+           dose = as.character(dose)) %>%
+    mutate(well = paste0(row,column)) %>%
+    select_('well','dir','individual','dose') %>%
+    group_by(dir) %>%
+    group_split()  %>%
+    setNames(unique(df$dir))
+}
+
+plot_platemap <- function(df, plot_title, feature_symbol){
+  df$plate <- df$dir
+  #print(paste("plotting",unique(df$plate)))
+    tryCatch(
+        # This is what I want to do...
+        {
+           p<-platetools::raw_map(
+                well = df$well,
+                data = df$individual,
+                  plate = 96)+
+                  ggtitle(paste0(plot_title," ", unique(df$plate)," Platemap"),
+                          subtitle = paste0('Well labels: replicate with ',feature_symbol)) +
+                shadowtext::geom_shadowtext(aes(
+                  label = paste0(df$dose),
+                  ),
+                  size = 4,
+                  show.legend  = F,
+                  fontface = "bold"
+                  ) 
+              #return (p)
+              pdf(file =  paste0("output/", plot_title, "_", unique(df$plate), ".pdf"))
+              plot(p)
+              dev.off()
+        },
+        error=function(error_message) {
+            message(error_message)
+            return(NA)
+        }
+    )
+}
+
+platemaps_do <- generate_platemap(do_focus_collection$all_plates)
+for (i in 1:length(platemaps_do)){
+    plot_platemap(platemaps_do[[i]],plot_title="do_screen", "dose")
+}
+```
+
+### CSV for QA
+
+```{r}
+custom_feature_selection <- c("h2axpositive_infocus", "infocus_intensity_nucleus_alexa488_mean_mean",
+                             "infocus_cell_roundness_mean",
+                             "nuclei_numberofobjects",
+                             "infocus_numberofobjects"
+                             )
+do_focus_collection$all_plates$replicate <- paste0(do_focus_collection$all_plates$individual,".",do_focus_collection$all_plates$plate)
+cols_to_select <- c('dir','row','column','dose','individual','replicate', custom_feature_selection)
+for_qa <- do_focus_collection$all_plates[,cols_to_select]
+names(for_qa)[names(for_qa) == "dir"] <- "plate"
+
+
+write.csv(for_qa, "output/arsenic_do_feature_qa.csv")
 ```
 
 ---
 
-- __Continue this pipeline with founders_data_transform.rmd and while using the _processed.RData_ dataset__
+- __Continue this pipeline using the _processed.RData_ dataset__

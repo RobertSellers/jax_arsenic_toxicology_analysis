@@ -1,0 +1,482 @@
+---
+title: "DO #2 Dimension reduction"
+author:
+- name: Robert Sellers
+  affiliation: The Jackson Laboratory
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
+abstract: |
+latex_engine: pdflatex
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    number_sections: true
+    theme: lumen
+    toc: yes
+    toc_float: yes
+    df_print: paged
+    # code_folding: "hide"
+  pdf_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pyments
+    keep_tex: yes
+    latex_engine: xelatex
+    number_sections: no
+    toc: no
+    
+---
+
+# Programming environment
+
+```{r message=FALSE}
+# various add-on scripts and stats tools
+source("scripts/custom_tools.R")
+# contains harmony plate collection class builder
+source("scripts/harmony_utils_v2.R")
+
+library(tidyverse)
+library(ggplot2) 
+library(ggpubr) # ggplot extension
+```
+
+# Load data
+
+## Load processed RDS / plate_collection data from temp_files
+
+```{r warning=FALSE, echo = FALSE}
+# point to parent data directory
+setwd("temp_files/")
+temp_data_storage <- "do_focus_processed.RData"
+do_focus_collection <- readRDS(temp_data_storage)
+```
+
+# Analysis
+
+## Correlation analysis and Dimension Reduction
+
+### Functions
+
+```{r}
+######## 1 #########
+rescale_feature_df_0_100 <- function(data, covariates){
+  all_features <- query_features(data)
+  data[,c(all_features)] <- lapply(data[,c(all_features)], function(x) as.numeric(as.character(x)))
+  data[,c(all_features)] <- lapply(data[,c(all_features)], function(x) scales::rescale(x, to = c(0.001, 99.999), from = range(x, na.rm = TRUE, finite = TRUE)))
+  return (list(
+    "rescaled_data" = data[,c(covariates,all_features)],
+    "parameters" = list(
+      "max_n" = length(all_features)
+      )
+    )
+  )
+}
+
+######## 2 #########
+mean_correlation_by_doseresponse <- function(data, group_id = 'mouse', remove_outliers = TRUE){
+  
+  ############ extract dose pairs for loop #############
+  f <- function(x) {
+    s <- seq(2, length(x), 1)
+    paste(x[s-1], x[s], sep=",")
+  }
+  
+  dose_pairs <- as.data.frame(do.call(rbind, strsplit(f(sort(unique(data$rescaled_data$dose))), ",")))
+  colnames(dose_pairs) <- c("low","high")
+  ######################################################
+  
+  mean_corr_dosepair_df_list<-mean_stdev_df_list<-mean_corr_matrix_list<-list()
+    
+  # loop through dose pairs
+  for (i in 1:nrow(dose_pairs)){
+    low <- dose_pairs[i, "low"]
+    high  <- dose_pairs[i, "high"]
+    print(paste("processing response change at", low,":",high, "at",group_id,"level"))
+    
+    sub_df_mean_diff_per_dose_response <- data$rescaled_data %>%
+      dplyr::filter(dose %in% c(low,high)) %>% # select only values inside low and high
+      separate(mouse, c("strain","replicate")) %>% # extract specific - remove as is unnecessary
+      group_by(strain, dose) %>%  # group by strain and dose - also unnecessary code
+      summarise_each(funs(mean), -c(replicate)) %>% # mean of each strain per dose response change
+      group_by(strain) %>%# now just group by strain
+      #filter_at(vars(-c(strain, dose)), all_vars(!(abs(. - median(.)) > 2*sd(.)))) %>% # removing outliers not advisable
+      summarise_at(vars(-dose),diff) # calculate difference in mean values
+    sub_df_stdev_per_dose_response <- data$rescaled_data %>%
+      dplyr::filter(dose %in% c(low,high)) %>% # select only values inside low and high
+      separate(mouse, c("strain","replicate")) %>% # fix
+      group_by(strain) %>%  # group by strain 
+      summarise_at(vars(-c(replicate, dose)),diff) %>%# get difference per dose pair within strain group
+      group_by(strain) %>%
+      summarise_each(funs(sd))
+    
+    # keep the first column 
+    names <-  sub_df_mean_diff_per_dose_response$strain
+    
+    # Transpose everything other than the first column
+    mean_T <- as.data.frame(as.matrix(t(sub_df_mean_diff_per_dose_response[,-1])))
+    stdev_T <- as.data.frame(as.matrix(t(sub_df_stdev_per_dose_response[,-1])))
+    
+    # Assign first column as the column names of the transposed dataframe
+    colnames(stdev_T) <- colnames(mean_T) <- names
+    res2<-Hmisc::rcorr(as.matrix(t(mean_T)), type="spearman")
+    ut <- upper.tri(res2$r)
+    
+    features_a <- rownames(res2$r)[row(res2$r)[ut]]
+    features_b <- rownames(res2$r)[col(res2$r)[ut]]
+    correlations <- (res2$r)[ut]
+    
+    flat_matrix_to_df <- data.frame(
+      feature_a = features_a,
+      feature_b = features_b,
+      cor  = correlations
+      )
+    colnames(flat_matrix_to_df)[3] <- paste0("cor_",low,"_",high)
+    
+    # append DR matrix to sub list
+    mean_corr_matrix_list[[paste0("interval_",low,"_",high)]] <- res2$r
+    mean_stdev_df_list[[paste0("interval_",low,"_",high)]] <- as.matrix(stdev_T)
+    mean_corr_dosepair_df_list[[paste0("interval_",low,"_",high)]] <- flat_matrix_to_df
+  }
+  # return all 3 sublists
+  return (list("mean_corr_matrix_list" = mean_corr_matrix_list,
+               "mean_stdev_df_list" = mean_stdev_df_list,
+               "mean_corr_dosepair_df_list" = mean_corr_dosepair_df_list,
+               "parameters" = list(
+                  "max_n" = data$parameters$max_n
+               )
+               ))
+}
+
+######## 3 #########
+
+filter_exceedances <- function(list_data, n, corr_cut_off, rank_by){
+  
+  print(paste("top",n,"selected from highest", rank_by))
+  
+  ########## 3a ###########
+  vals <- feature_exceedance_extraction(dr_list_object = list_data, corr_cut_off = corr_cut_off, n = n)
+  vals$name <- gsub("\\..*","",rownames(vals))
+  
+  ########## 3b ###########
+  sub_stdev <- extract_mean_stdev(list_data$mean_stdev_df_list, n=n)
+  
+  sub_stdev$name <- rownames(sub_stdev)
+  
+  intersecting_features <- intersect(sub_stdev$name,vals$name)
+  remove <- c()
+  keep <- c()
+  
+  # start @ lowest stdev 
+  for (i in 1:nrow(sub_stdev)){
+    name <- gsub("\\..*","",sub_stdev[i,]$name)
+    if (name %in% intersecting_features){
+        f_corr_df <- vals[vals[,'name']==name,]
+        f_corr_df_mirror <- vals[(vals[,'col'] ==  f_corr_df$row),]
+        f_corr_all <- cbind(f_corr_df,f_corr_df_mirror)[,c(4,8,3)] %>% 
+          left_join(sub_stdev, by = c("name" = "name")) %>%
+          left_join(sub_stdev, by = c("name.1" = "name")) %>%
+          dplyr::select(dplyr::contains(c("name","correlation","sdmeans"))) %>% 
+          arrange(desc(abs(correlation)))
+
+        # loop through every correlation pair and select highest SD between the two
+        for (r in 1:nrow(f_corr_all)){
+            # compare first SD against the second
+            # and confirm whether it is already slated for removal
+            if ((f_corr_all$sdmeans.x[r] >= f_corr_all$sdmeans.y[r]) && 
+                (f_corr_all$name.1[r] %notin% remove)){
+              if(f_corr_all$sdmeans.x[r] == f_corr_all$sdmeans.y[r]){
+                # handle identical features
+                print(paste(f_corr_all$name[r],"is identical to",f_corr_all$name.1[r]))
+                #browser()
+              }else{
+                # remove the second pair
+                remove <- c(remove,f_corr_all$name.1[r])
+              }
+            }else{
+              if(f_corr_all$name[r] %notin% remove){
+                # remove the first pair
+                remove <- c(remove,f_corr_all$name[r])
+
+              }
+            }
+        }
+    }
+  }
+  
+  ### prepare return object ###
+  keep <- sub_stdev[sub_stdev$name %notin% remove,]
+  remove <- sub_stdev[sub_stdev$name %in% remove,]
+  
+  #### add stdev data ###
+  stdevs_subset <- subset(sub_stdev, rownames(sub_stdev) %in% keep$name)
+  
+  print(paste("salvaging", nrow(keep),"/",n,"features"))
+  return (list(
+    "keep"=keep,
+    "remove"=remove,
+    "stdev_subset" = stdevs_subset, 
+    "parameters"= list(
+      "max_n" = list_data$parameters$max_n,
+      "target_n" = n, 
+      "corr_threshold" = corr_cut_off,
+      "rank_by" =rank_by)
+    )
+  )
+}
+
+########## 3b, 3a-1 ###########
+extract_mean_stdev <- function(stdev_list, n = 'all'){
+  # reduce all matrices into a single dataframe of average values
+  sd_df <- data.frame(
+    sd_0_0.1=apply(stdev_list$interval_0_0.1,1, sd, na.rm = TRUE),
+    sd_0.1_0.5=apply(stdev_list$interval_0.1_0.5,1, sd, na.rm = TRUE),
+    sd_0.5_1=apply(stdev_list$interval_0.5_1,1, sd, na.rm = TRUE),
+    sd_1_2=apply(stdev_list$interval_1_2,1, sd, na.rm = TRUE),
+    sd_2_3=apply(stdev_list$interval_2_3,1, sd, na.rm = TRUE),
+    sd_3_4=apply(stdev_list$interval_3_4,1, sd, na.rm = TRUE),
+    sd_4_5=apply(stdev_list$interval_4_5,1, sd, na.rm = TRUE)
+  )
+  sd_df$sdmeans <- rowMeans(sd_df)
+  return (sd_df %>% slice_max(sdmeans, n = n))
+}
+
+########## 4 ###########
+extract_mean_corr <- function(corr_list){
+  
+  corr_reduced_matrix <- Reduce("+",  lapply(corr_list, function(x) replace(x, is.na(x), 0))) / length(lapply(corr_list, Negate(is.na)))
+
+  #corr_reduced_df$corrmeans <- rowMeans(corr_reduced_df)
+  return (corr_reduced_matrix)
+  
+}
+
+########## 3a ###########
+feature_exceedance_extraction <- function(dr_list_object, corr_cut_off, n){
+
+  ########## 3a-1 ###########
+  sub_stdev <- extract_mean_stdev(dr_list_object$mean_stdev_df_list, n)
+  
+  features <- data.frame("feature" = rownames(sub_stdev), "mean_sd" = sub_stdev$sdmeans)
+  
+    ########## 3a-2 ###########
+    vals <- subset_corr_matrix(
+      avg_corr_mat =  dr_list_object$mean_corr_matrix_list,
+      avg_std_mat = sub_stdev,
+      all_features = features,
+      corr_cut_off = corr_cut_off
+      )
+    
+    return(vals)
+}
+########## 3a-2 ###########
+subset_corr_matrix <- function(avg_corr_mat, avg_std_mat, all_features, corr_cut_off){
+  
+    corr_df_mean_all <- as.data.frame(Reduce("+",  lapply(avg_corr_mat, function(x) replace(x, is.na(x), 0))) / length(lapply(avg_corr_mat, Negate(is.na))))
+    
+    # subset on all_features
+    corr_df_mean_subset <- corr_df_mean_all[
+      rownames(corr_df_mean_all) %in% all_features$feature, 
+      colnames(corr_df_mean_all) %in% all_features$feature
+      ] 
+    
+    m <- as.matrix(corr_df_mean_subset)
+    
+    correlations <- which( abs(m) > corr_cut_off, arr.ind=T )
+    vals <- correlations[correlations[, 1] != correlations[, 2], ]
+    vals <- as.data.frame(cbind(vals,correlation=m[vals]))
+    
+    print(paste("identified",length(unique(vals$row)),"/",length(all_features$feature),"with one or more dose pair exceeding",corr_cut_off ))
+  return(vals)
+}
+
+########## 6 ###########
+corr_plot_w_stdevs <- function(m, e_results, stds){
+  
+    # extract values from filter_exceedance results
+    target_n <- e_results$parameters$target_n
+    corrv <- e_results$parameters$corr_threshold
+    salvaged <- e_results$keep
+    stds <- e_results$stdev_subset
+    
+    par(cex.main=0.75)
+    colrange <- c("grey",colorRampPalette(c("orange", "yellow"))(3),colorRampPalette(c("cyan", "blue"))(3), "grey")
+    
+    gplots::heatmap.2( m, 
+                     Rowv=FALSE, 
+                     Colv=FALSE, 
+                     symm = TRUE,
+                     main = paste0("corr value range < ",as.character(corrv), ", n = ", nrow(salvaged), "/", target_n),
+                     dendrogram='none', 
+                     cellnote=round(m,2), 
+                     notecol="black",  
+                     notecex = 0.75,
+                     cexRow = 1 / log10(nrow(m)) - 0.3,
+                     cexCol = 1 / log10(ncol(m)) - 0.3,
+                     srtCol = 345,  
+                     adjCol = c(0, 1),
+                     labCol = paste(toupper(letters[1:nrow(m)])," | ",rownames(m)),
+                     labRow =   paste(toupper(letters[1:nrow(m)])," | ",paste0("mean stdev: ", round(stds$sdmeans,2))),
+                     col =  colrange,
+                     trace='none', 
+                     key=FALSE,
+                    breaks = c(-1,-corrv,(-corrv/2),(-corrv/3),0,(corrv/2),(corrv/3),corrv,1),
+                       lwid = c(0.2,20),
+                       lhei = c(4,15),
+                     margins = c(5,8))
+    
+} 
+
+# ggplot line plot with using a hybrid data.frame
+feature_reduction_lplot <- function(mouse_metrics, results){
+  
+  n <- results$parameters$target_n
+  
+  sd_df_all <- extract_mean_stdev(mouse_metrics$mean_stdev_df_list,
+          n = results$parameters$max_n) 
+  # rescale sd_means so easier to see in plot
+  sd_df_all$sdmeans <- scales::rescale(sd_df_all$sdmeans, to = c(0, max(sd_df_all)))
+  
+  sd_df_all$vesting <- ifelse(rownames(sd_df_all) %in% c(results$keep$name,results$remove$name), TRUE, FALSE)
+  
+  sd_df_all_melt <- reshape2::melt(as.matrix(sd_df_all)) %>%
+    dplyr::rename(feature = Var1, stdev = Var2)
+  
+  sd_df_all_melt$vesting <- ifelse(sd_df_all_melt$feature %in% c(results$keep$name,results$remove$name), TRUE, FALSE)
+  
+  ss_sd_df_all_melt <-sd_df_all_melt[!(sd_df_all_melt$stdev=="vesting"),]
+  
+  ss_sd_df_all_melt$vesting <- as.character(as.logical(ss_sd_df_all_melt$vesting))
+  
+  ss_sd_df_all_melt$vesting <- ifelse(ss_sd_df_all_melt$feature %notin% rownames(results$keep), ss_sd_df_all_melt$vesting, 2)
+  
+  ss_sd_df_all_melt<- ss_sd_df_all_melt %>%
+    mutate(vesting = ifelse(feature %in% results$keep$name, "good", vesting))
+  
+  # rename and ggplot manual aesthetics zone
+  new_vals <- c("Disqualified_corr","Disqualified_STDev","Qualified_Distinct")
+  
+  ss_sd_df_all_melt$vesting <- plyr::mapvalues(ss_sd_df_all_melt$vesting,
+            from=c("TRUE","FALSE","good"),
+            to=new_vals)
+  linetypes <- c("Disqualified_STDev" = 'solid',"Disqualified_corr" = 'dotted',"Qualified_Distinct" = 'solid')
+  alphatypes <- c("Disqualified_STDev" = .1,"Disqualified_corr" = 1, "Qualified_Distinct" = 1)
+  colortypes <- c("Disqualified_STDev" = 'black',"Disqualified_corr" = 'white', "Qualified_Distinct" = '#d60400')
+sizetypes <- c("Disqualified_STDev" = 0.1,"Disqualified_corr" = 0.1,"Qualified_Distinct" = 1)
+
+  new_labs <- sub("_"," - ",sub("^[^_]*_", "", colnames(sd_df_all)))
+  x_lab_labels <- c(new_labs[-length(new_labs)],"scaled mean")
+  names(x_lab_labels) <- colnames(sd_df_all)
+  
+  # manually sort vesting column for line symbol order
+  ss_sd_df_all_melt$vesting <- factor(ss_sd_df_all_melt$vesting)
+  ss_sd_df_all_melt$vesting<- factor( as.character(  ss_sd_df_all_melt$vesting), levels=new_vals[c(2,3,1)])
+
+  gg<- ggplot(ss_sd_df_all_melt[order(ss_sd_df_all_melt$vesting),]) +
+    labs(title=paste0("Feature StDev across Dose Response\n",
+                      "corr value range: ",-results$parameters$corr_threshold, ":",results$parameters$corr_threshold,
+                      " | n = ",nrow(results$keep)," (",results$parameters$target_n,")(",mouse_metrics$parameters$max_n,")"),
+          x ="Change in Response between dose", y = "Mean StDev within Strain"
+         ) +
+    geom_line(aes(
+      alpha = vesting,
+      x = stdev,
+      y = value,
+      group = feature,
+      linetype = vesting,
+      color = vesting
+    )) + 
+    scale_linetype_manual(values=linetypes) + #does this work?
+    scale_size_manual(values = sizetypes) +
+    scale_alpha_manual(values=alphatypes) +
+    scale_color_manual(values=colortypes) +
+    scale_x_discrete(
+      labels=x_lab_labels
+    ) +
+  theme_dark() +
+  theme(legend.position='top', 
+        legend.justification='left',
+        legend.title=element_blank(),
+        legend.direction='horizontal') 
+  return (gg)
+}
+```
+
+### Feature reduction
+
+1. rescale predictors between 0 and 100
+
+2. _mean_correlation_by_dose_response_ takes harmony input and calculates
+  - mean_corr_matrix_list, a list of correlation matrices per dose response (update this)
+  - mean_stdev_df_list, a list of stdev dataframes for each strain
+  - mean_corr_dosepair_df_list, a list of pairwise correlations between each feature
+  
+3. _filter_exceedances_ takes the result of the prior function, takes parameters to decide which features are to be selected
+
+4. _extract_mean_corr_ generate aggregate / simplified correlation per feature pair across entire DR 
+
+5. _corr_plot_w_stdevs_ general plots / heatmap.2 of reduction
+
+6. _feature_reduction_lplot_ general plots / ggplot grouped line plot of reduction
+
+```{r}
+############ 1 ############
+# rescaled_data_list <- rescale_feature_df_0_100(do_focus_collection$all_plates, covariates = c("dose","individual") )
+# 
+# # contains harmony plate collection class builder
+# ############ 2 ############
+# mouse_metrics <- mean_correlation_by_doseresponse(data = rescaled_data_list,  group_id = 'mouse')
+# 
+# ############ 3 ############
+# results <- suppressWarnings(filter_exceedances(list_data = mouse_metrics, # input list object
+#                                                n = 100, # maximum number of values to return
+#                                                corr_cut_off = 0.9, # makes underlying values positive
+#                                                rank_by = 'stdev')) # this is the only current option
+# 
+# ############ 4 ############
+# # generate greater correlation matrix
+# corr_matrix <- extract_mean_corr(mouse_metrics$mean_corr_matrix_list)
+# 
+# ############ 5 ############
+# 
+# # extract affirmed data only from greater correlation matrix
+# subset_corr_matrix_data <- corr_matrix[results$keep$name, results$keep$name]
+# 
+# #### Visualize feature selection ####
+# # heatmap function
+# #corr_plot_w_stdevs(m = subset_corr_matrix_data, e_results = results)
+# # line chart for results
+# gg <-feature_reduction_lplot(mouse_metrics = mouse_metrics, results = results)
+# # plotly::ggplotly(gg)
+# gg
+```
+
+## Flag / inform the above data selection
+
+```{r}
+custom_feature_selection <- c("h2axpositive_infocus",
+                             "infocus_intensity_nucleus_alexa488_mean_mean",
+                             "infocus_cell_roundness_mean",
+                             "nuclei_numberofobjects",
+                             "infocus_numberofobjects"
+                             )
+
+# checking 
+# confirmation <- founders_quantal_collection$features_df
+# confirmation$status <- ifelse(confirmation$name_ %in% results$keep$name, 'keep', NA)
+# confirmation$status <- ifelse(confirmation$name_ %in% results$remove$name, 'failed_correlation', confirmation$status)
+# confirmation$status <- ifelse(confirmation$name_ %notin% c(results$remove$name, results$keep$name), 'failed_stdev', confirmation$status)
+# 
+# confirmation$custom_selection <- confirmation$name_ %in% custom_feature_selection
+
+# create T/F columns for subsetting later based on selected groups
+# founders_quantal_collection$features_df$stdev_selection <- founders_quantal_collection$features_df$name_ %in% results$keep$name 
+do_focus_collection$features_df$custom_selection <- do_focus_collection$features_df$name_ %in% custom_feature_selection
+```
+
+# Save/overwrite RDS
+
+```{r}
+temp_data_storage <- paste0("temp_files/do_focus_reduced.RData")
+saveRDS(do_focus_collection, temp_data_storage)
+```
+
