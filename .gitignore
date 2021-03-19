@@ -115,3 +115,5 @@ Backup[ ]of[ ]*.numbers/
 
 papers/*
 figures/presentations/*
+callan_system/temp_files/*
+callan_system/do_focus/*
