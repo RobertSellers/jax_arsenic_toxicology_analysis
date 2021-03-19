@@ -106,46 +106,52 @@ harmony_create_collection <- function(dir, overwrite = FALSE){
           cur_path <- file.path(dir,file_list[3])
           
           ###### INDEX FILE#######
-          index_file <- file.path(cur_path, "indexfile.txt")
-          
-          if(file.exists(index_file)){
-            
-            idx_df <- read_tsv(index_file) %>%
-              select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-              janitor::clean_names() %>% # removes spaces and bad characters for underscores
-              mutate(channel_name = tolower(gsub("[[:punct:][:blank:]]", "_", channel_name)),
-                    dir = plate_obj_name)
-            
-            # split dataframes based on stain value
-            #idx_df_split <- split(idx_df, idx_df$channel_name)
-          }else{
+          idx_df <- data.frame()
+          try({
+            index_file <- file.path(cur_path, "indexfile.txt")
+            if(file.exists(index_file)){
+              idx_df <- read_tsv(index_file) %>%
+                select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
+                janitor::clean_names() %>% # removes spaces and bad characters for underscores
+                mutate(channel_name = tolower(gsub("[[:punct:][:blank:]]", "_", channel_name)),
+                      dir = plate_obj_name)
+              
+              # split dataframes based on stain value
+              #idx_df_split <- split(idx_df, idx_df$channel_name)
+              }
+              else{
             #nothing right now
-            stop('Index data not loaded')
-          }
+            warning('Index data not loaded')
+            }
+          })
+          
           
           # ###### PLATE FILE#######
-          plate_file <- file.path(cur_path, paste0("Evaluation", e), "PlateResults.txt")
-          
-          if(file.exists(plate_file)){
+          plate_df <- data.frame()
+          try({
+            plate_file <- file.path(cur_path, paste0("Evaluation", e), "PlateResults.txt")
             
-            # handle metadata for plate header
-            plate_header_raw <- readLines(plate_file,n = 8)
-            split_header <- strsplit(plate_header_raw, split="\t")
-            metadata_df <- as.data.frame(t(do.call(rbind,split_header[c(1:6)]))) %>%
-              row_to_names(row_number = 1)
-            
-            plate_df <- read_tsv(plate_file,skip=8) %>%
-              select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-              janitor::clean_names() %>%# removes spaces and bad characters for underscores
-              mutate(dir = plate_obj_name)
-            plate_df[is.nan(plate_df)] <- NA #change NaN to NA
-            
-          }else{
-            stop('Plate data not loaded')
-          }
+            if(file.exists(plate_file)){
+              
+              # handle metadata for plate header
+              plate_header_raw <- readLines(plate_file,n = 8)
+              split_header <- strsplit(plate_header_raw, split="\t")
+              metadata_df <- as.data.frame(t(do.call(rbind,split_header[c(1:6)]))) %>%
+                row_to_names(row_number = 1)
+              
+              plate_df <- read_tsv(plate_file,skip=8) %>%
+                select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
+                janitor::clean_names() %>%# removes spaces and bad characters for underscores
+                mutate(dir = plate_obj_name)
+              plate_df[is.nan(plate_df)] <- NA #change NaN to NA
+              
+            }else{
+              warning('Plate data not loaded')
+            }
+          })
           
           # ###### CELLS FILE#######
-          #cells_file <- file.path(cur_path, paste0("Evaluation", e), "Objects_Population - Nuclei Selected.txt")
+          cell_df <- data.frame()
           cells_file <- list.files(file.path(cur_path, paste0("Evaluation", e)), full.names = TRUE, pattern = "Objects_Population")[1]
           if(file.exists(cells_file)){
             
