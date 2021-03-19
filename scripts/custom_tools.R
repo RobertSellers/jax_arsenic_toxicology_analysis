@@ -11,6 +11,19 @@ testInteger <- function(x){
   else { return(FALSE) }
 }
 
+LETTERS702 <- c(LETTERS, sapply(LETTERS, function(x) paste0(x, LETTERS)))
+
+# grep function that removes a pattern
+remove_sd_vars <- function(data){
+  # remove from all_plates
+  before_cols <- ncol(data$all_plates)
+  data$all_plates <- dplyr::select(data$all_plates, -dplyr::contains("stdev"))
+  print(paste("removing",(before_cols-ncol(data$all_plates)), "/", before_cols,"columns"))
+  # remove from features_df
+  data$features_df <- data$features_df[!grepl("stdev", data$features_df$name_),]
+  return (data)
+}
+
 # see http://rstudio-pubs-static.s3.amazonaws.com/1563_1ae2544c0e324b9bb7f6e63cf8f9e098.html
 # log_skew_transform <- function(response_var = 'response') {
 #   skew_val <- e1071::skewness(response_var)
