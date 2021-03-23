@@ -30,8 +30,11 @@ output:
 # Programming environment
 
 ```{r message=FALSE}
+# env
+options(scipen = 999) # suppress sci notation
+
 # contains harmony plate collection class builder
-source("scripts/harmony_utils_v2.R")
+source("scripts/harmony_utils.R")
 # various add-on scripts and stats tools
 source("scripts/custom_tools.R")
 
@@ -39,6 +42,9 @@ library(tidyverse)
 library(janitor)
 library(ggplot2) 
 library(ggpubr) # ggplot extension
+library(lme4)
+library(lmerTest)
+library(sjPlot)
 ```
 
 # Load data
@@ -47,30 +53,73 @@ library(ggpubr) # ggplot extension
 
 ```{r warning=FALSE, echo = FALSE}
 # point to parent data directory
-setwd("data/discovery_invitro/")
-selected_dir <- "./do_focus"
+setwd("data/invitro/")
+selected_dir <- "./do_focus_merge"
 # Warning - this currently expects a temp_files data dir 
 # Set overwrite to TRUE when underlying data dir has been changed
-do_focus_collection <- harmony_create_collection(dir = './do_focus',overwrite = FALSE) 
+harmony_collection <- harmony_create_collection(dir = selected_dir, overwrite = FALSE)
 ```
 
 ## Data treatments
 
 ```{r warning = FALSE}
 # consult https://cran.r-project.org/web/packages/janitor/vignettes/janitor.html
-do_focus_collection$all_plates <- do_focus_collection$all_plates %>% 
-  dplyr::rename(
-    #strain = cell_type, individual not strain 
-    dose = concentration
-    ) %>%
+
+# potentially universal updates
+harmony_collection$all_plates <- harmony_collection$all_plates %>% 
+  dplyr::rename(dose = concentration) %>%
   add_column(sex = NA, .after="individual") %>%
-  filter(dir %notin% c("dC20244_A1__20200918T11_06_17Measurement_1_e6",
-                         "dC20244_A2__20200914T11_13_52Measurement_1_e6",
-                         "dC20244_B1__20200914T09_49_07Measurement_2_e6",
-                         "dC20244_B2__20200918T09_22_05Measurement_1_e6")) %>%
-  filter(dose != 0.5, individual != '11_20') %>%
-  mutate(mouse = paste0(gsub('_','[.]',individual),"_", plate)) %>%
-  dplyr::select(plate,row,column,dose,sex,individual, mouse, everything())
+  mutate(mouse = paste0(gsub('_','.',individual),"_", plate)) %>%
+  dplyr::select(plate,row,column,dose,sex,individual, mouse, everything()) %>%
+  # hardcode mapped replicates to paired IDs
+   mutate(group_pair = LETTERS702[group_indices(., substr(plate,1,1), sub("\\_.*", "", dir))]) 
+
+# unique data cleaning
+harmony_collection$all_plates <- harmony_collection$all_plates %>% 
+  filter(
+  dose != 0.5, 
+  individual != '11_20') %>%
+  mutate(plate=ifelse((dir=='d20223_B2_Cal__20200817T11_02_00Measurement_1_e5'), 'A2', plate)) %>%
+  mutate(plate=ifelse((dir=='d20223_A1_Cal__20200817T17_03_14Measurement_2_e7'), 'A1', plate)) %>%
+  mutate(plate=ifelse((dir=='d20223_A2_Cal__20200818T14_54_58Measurement_1_e6'), 'B2', plate)) %>%
+  mutate(plate=ifelse((dir=='dC20236_B2__20200828T14_45_19Measurement_1_e8'), 'B2', plate)) %>%
+  mutate(plate=ifelse((dir=='dC20255_B1__20200925T14_41_51Measurement_5_e6'), 'B1', plate)) %>%
+  mutate(plate=ifelse((dir=='dC20255_B2__20200926T13_00_37Measurement_2_e6'), 'B2', plate)) %>%
+  mutate(plate=ifelse((dir=='dC20236_B1__20200828T13_12_27Measurement_1_e7'), 'B1', plate)) %>%
+  mutate(plate=ifelse((dir=='dC20255_B2_last3columns__20200928T09_33_41Measurement_1_e7'), 'B2', plate)) %>%
+  mutate(plate=ifelse((dir=='d20223_B1_Cal__20200827T10_48_20Measurement_1_e7'), 'B1', plate)) %>%
+  mutate(plate=ifelse((dir=='dC20264_B1__20200928T12_28_55Measurement_1_e5'), 'B1', plate)) %>%
+  mutate(plate=ifelse((dir=='dW20267_A1__20201002T10_37_07Measurement_1_e5'), 'A1', plate)) %>%
+  mutate(plate=ifelse((dir=='dW20267_A2__20201004T15_35_00Measurement_1_e5'), 'A2', plate)) %>%
+  mutate(plate=ifelse((dir=='dW20267_B1__20201004T12_18_54Measurement_2_e5'), 'B1', plate)) %>%
+  mutate(plate=ifelse((dir=='dW20267_B2__20201002T12_32_44Measurement_2_e5'), 'B2', plate)) %>%
+  # replace last 3 columns 
+  mutate(keep = ifelse((dir=='dC20255_B2__20200926T13_00_37Measurement_2_e6' & column < 10),'keep',
+                ifelse((dir=='dC20264_B1__20200928T12_28_55Measurement_1_e5' & column < 9),'keep',
+                ifelse((dir %notin% c('dC20264_B1__20200928T12_28_55Measurement_1_e5','dC20255_B2__20200926T13_00_37Measurement_2_e6')), 'keep','remove')))) %>%
+  # final coat 
+  # mutate(group_pair=ifelse((dir=='d20222_B1_Cal__20200825T12_23_59Measurement_3_e6'), 'ZZ', group_pair)) %>%
+  # mutate(group_pair=ifelse((dir=='dC20222_B2_rerun__20200829T11_01_59Measurement_4_e6'), 'ZZ', group_pair)) %>%
+  filter(keep == 'keep') #%>% 
+  #purrr::discard(~sum(is.na(.x))/length(.x)* 100 >=50)
+```
+
+### Quick QA Tests
+
+```{r}
+# check <- harmony_collection$all_plates %>% 
+#   mutate(a = paste0(substr(plate,1,2), "_",substr(dir,1,10)))
+# table(check$plate,check$group_pair)
+# 
+# write.csv(table(check$individual,check$group_pair),"~/Desktop/confirm_plates.csv")
+
+#table(check$individual,check$group_pair)
+# check_pair <-subset(check,group_pair == 'V')[,c("plate","row","column","dose","group_pair","individual","dir","a","keep")]
+# table(check_pair$individual,check_pair$group_pair)
+# test <- harmony_collection$all_plates
+# test$na_count <- apply(is.na(test), 1, sum)
+# test <- harmony_collection$all_plates %>%
+#   filter_at(vars(.), all_vars(is.na(.)))
 ```
 
 ## Coordinated feature metadata
@@ -80,36 +129,135 @@ do_focus_collection$all_plates <- do_focus_collection$all_plates %>%
 ```{r}
 # pseudo database solution
 # you can't do this too frequently < every 2 minutes or so
-feature_metadata <- googlesheets4::read_sheet(ss = "1A6qMVGhtJykfbCQK1qq0qv5w3HfKvs8ByVSCiExc49s", sheet = 'founders_quantal') # problem with DO vs Founders here
+# make this a -if not exists-
+feature_metadata <- googlesheets4::read_sheet(ss = "1A6qMVGhtJykfbCQK1qq0qv5w3HfKvs8ByVSCiExc49s", sheet = 'do_screen') 
 
 # remove unmatched features from all_plates
 # this doesn't seem necessary for Founders but will need for DO
-do_focus_collection$all_plates <- do_focus_collection$all_plates %>% select (-feature_metadata$name_[feature_metadata$mutuality==FALSE])
+harmony_collection$all_plates <- harmony_collection$all_plates %>% dplyr::select(-feature_metadata$name_[feature_metadata$mutuality==FALSE])
 
 # remove unmatched features from features metadata (if applicable)
-do_focus_collection$features_df <- do_focus_collection$features_df %>%
+harmony_collection$features_df <- harmony_collection$features_df %>%
   left_join(feature_metadata[,c("name_","stain","mutuality")], "name_") %>%
   filter(mutuality) %>% # TRUE/FALSE if in DO and vice versa
-  select(-mutuality)
+  dplyr::select(-mutuality)
 ```
 
 ## Remove STDEV data
 - Targets both all_plates & feature_df currently
 
 ```{r}
-# grep function that removes a pattern
-remove_sd_vars <- function(data){
-  # remove from all_plates
-  before_cols <- ncol(data$all_plates)
-  data$all_plates <- dplyr::select(data$all_plates, -dplyr::contains("stdev"))
-  print(paste("removing",(before_cols-ncol(data$all_plates)), "/", before_cols,"features"))
-  # remove from features_df
-  data$features_df <- data$features_df[!grepl("stdev", data$features_df$name_),]
-  return (data)
+# remove columns / features with pattern "stdev"
+harmony_collection <- remove_sd_vars(harmony_collection)
+```
+
+# Effects modeling
+
+- https://rpubs.com/mlmcternan/BC-lme
+- https://stats.stackexchange.com/questions/13166/rs-lmer-cheat-sheet
+- https://www.rpubs.com/actuallyykatie/thanosregdraft
+- https://rpubs.com/loveb/mm
+- https://rpubs.com/loveb/mixedmodel
+- https://rpubs.com/mcgill_linguistics/63173
+
+
+```{r}
+as.numeric.factor <- function(x) {as.numeric(levels(x))[x]}
+
+# check <- subset(harmony_collection$all_plates, individual %in% subset(as.data.frame(table(harmony_collection$all_plates$individual)),Freq != 32)$Var1)
+# 
+# check_me <- subset(harmony_collection$all_plates,individual %notin% unique(check$individual))
+
+custom_feature_selection <- c("h2axpositive_infocus", "infocus_intensity_nucleus_alexa488_mean_mean",
+                             "infocus_cell_roundness_mean",
+                             "nuclei_numberofobjects"
+                             )
+
+for_qa <- harmony_collection$all_plates[,c('dir','row','column','dose','individual','mouse', 'group_pair',custom_feature_selection)] %>%
+  filter(!is.na(mouse)) %>%
+  rename(plate = dir,
+         h2ax = h2axpositive_infocus,
+         alexa = infocus_intensity_nucleus_alexa488_mean_mean,
+         roundness = infocus_cell_roundness_mean,
+         nuclei = nuclei_numberofobjects) %>%
+  mutate(individual = factor(individual), 
+         fdose = factor(dose),
+         plate = factor(plate), 
+         row = factor(row), 
+         column = factor(column)
+         ) %>%
+  mutate(alexa = log10(alexa),
+         h2ax = log(h2ax),
+         nuclei = log(nuclei))
+
+# for_qa_avgs <- for_qa %>% group_by(group_pair, plate, fdose, individual,mouse) %>%
+#   summarise(h2ax = mean(h2ax, na.rm=TRUE),
+#             alexa = mean(alexa, na.rm=TRUE),
+#             roundness = mean(roundness, na.rm=TRUE),
+#             nuclei = mean (nuclei), na.rm=TRUE) %>%
+#   ungroup()
+
+# fixed effects only
+for_qa[is.na(for_qa) | for_qa == Inf | for_qa == -Inf] <- NA 
+
+for_qa <- for_qa %>% 
+  group_by(group_pair) %>% 
+  mutate(M = median(nuclei, na.rm =TRUE)) %>%
+  group_by(individual, group_pair) %>%
+  mutate(n = n())%>%
+  add_column(bin_id = NA)
+  
+
+# loop for binary color scheme ggplot
+
+for (i in 1:nrow(for_qa)){
+  if (i != 1){
+    if (for_qa[i,]$plate == for_qa[i-1,]$plate){
+      for_qa[i,]$bin_id <- for_qa[i-1,]$bin_id
+    }else{
+      if(for_qa[i-1,]$bin_id == 1){
+        for_qa[i,]$bin_id <- 0
+      }else{
+        for_qa[i,]$bin_id <- 1
+      }
+    }
+  }else{
+    for_qa[i,]$bin_id <- 1
+  }
 }
 
-# remove columns / features with pattern "stdev"
-do_focus_collection <- remove_sd_vars(do_focus_collection)
+for_qa$bin_id <- as.character(for_qa$bin_id)
+
+baseline_me_model <- lmer(alexa ~ (1|individual) + (1|plate) + fdose, data=purrr::map_df(for_qa,rev), REML=FALSE)
+
+# apply ranef
+# 4 evaluation scripts
+#lme4::ranef(baseline_me_model)
+#lme4::fixef(baseline_me_model)
+#anova(baseline_me_model)
+#ranova(baseline_me_model)
+
+
+# check inter-mouse effects
+pdf(file = "output/baseline_me_model.pdf", height = 80) 
+sjPlot::plot_model(baseline_me_model,show.values = FALSE)
+dev.off()
+```
+
+```{r}
+arial_grey_theme <- ggplot2::theme(
+  axis.text.x = element_text(colour="grey20", size=6, angle=90, hjust=.5, vjust=.5),
+  axis.text.y = element_text(colour="grey20", size=6)
+  )
+pdf(file = "output/do_boxplot_pairs.pdf", height = 10, width = 10)   
+
+p <- ggplot(data = for_qa) + theme(legend.position = "none") + geom_boxplot( aes(x = individual, y = nuclei, colour = bin_id), show.legend = FALSE,outlier.size = -1) + ylab("nuclei") + 
+    # geom_text(data  = p_meds, aes(x = individual, y = h2ax, label = n), 
+    #           size = 2) +
+  geom_hline(aes(yintercept=M), colour="#d44846", linetype ='longdash') 
+
+p + facet_wrap(~group_pair, scales = "free_x")  + theme(legend.position = "none") + arial_grey_theme
+dev.off()
 ```
 
 ## Save/overwrite
@@ -118,7 +266,7 @@ do_focus_collection <- remove_sd_vars(do_focus_collection)
 
 ```{r}
 temp_data_storage <- paste0("temp_files/",selected_dir,'_processed.RData')
-saveRDS(do_focus_collection, temp_data_storage)
+saveRDS(harmony_collection, temp_data_storage)
 ```
 
 ### Platemap object
@@ -172,7 +320,7 @@ plot_platemap <- function(df, plot_title, feature_symbol){
 
 platemaps_do <- generate_platemap(do_focus_collection$all_plates)
 for (i in 1:length(platemaps_do)){
-    plot_platemap(platemaps_do[[i]],plot_title="do_screen", "dose")
+    plot_platemap(platemaps_do[[i]], plot_title="do_screen", "dose")
 }
 ```
 
@@ -184,13 +332,13 @@ custom_feature_selection <- c("h2axpositive_infocus", "infocus_intensity_nucleus
                              "nuclei_numberofobjects",
                              "infocus_numberofobjects"
                              )
-do_focus_collection$all_plates$replicate <- paste0(do_focus_collection$all_plates$individual,".",do_focus_collection$all_plates$plate)
-cols_to_select <- c('dir','row','column','dose','individual','replicate', custom_feature_selection)
+do_focus_collection$all_plates$mouse <- paste0(do_focus_collection$all_plates$individual,".",do_focus_collection$all_plates$plate)
+cols_to_select <- c('dir','row','column','dose','individual','mouse', custom_feature_selection)
 for_qa <- do_focus_collection$all_plates[,cols_to_select]
 names(for_qa)[names(for_qa) == "dir"] <- "plate"
 
 
-write.csv(for_qa, "output/arsenic_do_feature_qa.csv")
+#write.csv(for_qa, "output/arsenic_do_feature_qa.csv")
 ```
 
 ---
