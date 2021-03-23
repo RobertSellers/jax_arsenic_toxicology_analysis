@@ -51,3 +51,5 @@ VLookup <- function(this, data, key, value) {
   m <- match(this, data[[key]])
   data[[value]][m]
 }
+
+as.numeric.factor <- function(x) {as.numeric(levels(x))[x]}
