@@ -106,6 +106,8 @@ harmony_collection$all_plates <- harmony_collection$all_plates %>%
 
 ### Quick QA Tests
 
+- QA graveyard
+
 ```{r}
 # check <- harmony_collection$all_plates %>% 
 #   mutate(a = paste0(substr(plate,1,2), "_",substr(dir,1,10)))
@@ -120,6 +122,29 @@ harmony_collection$all_plates <- harmony_collection$all_plates %>%
 # test$na_count <- apply(is.na(test), 1, sum)
 # test <- harmony_collection$all_plates %>%
 #   filter_at(vars(.), all_vars(is.na(.)))
+
+# check <- subset(harmony_collection$all_plates, individual %in% subset(as.data.frame(table(harmony_collection$all_plates$individual)),Freq != 32)$Var1)
+# 
+# check_me <- subset(harmony_collection$all_plates,individual %notin% unique(check$individual))
+
+# custom_feature_selection <- c("h2axpositive_infocus", "infocus_intensity_nucleus_alexa488_mean_mean",
+#                              "infocus_cell_roundness_mean",
+#                              "nuclei_numberofobjects"
+#                              )
+
+
+# for_qa_avgs <- for_qa %>% group_by(group_pair, plate, fdose, individual,mouse) %>%
+#   summarise(h2ax = mean(h2ax, na.rm=TRUE),
+#             alexa = mean(alexa, na.rm=TRUE),
+#             roundness = mean(roundness, na.rm=TRUE),
+#             nuclei = mean (nuclei), na.rm=TRUE) %>%
+#   ungroup()
+
+# 
+# do_focus_collection$all_plates$mouse <- paste0(do_focus_collection$all_plates$individual,".",do_focus_collection$all_plates$plate)
+# cols_to_select <- c('dir','row','column','dose','individual','mouse', custom_feature_selection)
+# for_qa <- do_focus_collection$all_plates[,cols_to_select]
+# names(for_qa)[names(for_qa) == "dir"] <- "plate"
 ```
 
 ## Coordinated feature metadata
@@ -162,52 +187,29 @@ harmony_collection <- remove_sd_vars(harmony_collection)
 
 
 ```{r}
-as.numeric.factor <- function(x) {as.numeric(levels(x))[x]}
+feature_of_interest <- "nuclei_numberofobjects"
 
-# check <- subset(harmony_collection$all_plates, individual %in% subset(as.data.frame(table(harmony_collection$all_plates$individual)),Freq != 32)$Var1)
-# 
-# check_me <- subset(harmony_collection$all_plates,individual %notin% unique(check$individual))
+group_vars <- c('dir','row','column','dose','individual','mouse', 'group_pair')
 
-custom_feature_selection <- c("h2axpositive_infocus", "infocus_intensity_nucleus_alexa488_mean_mean",
-                             "infocus_cell_roundness_mean",
-                             "nuclei_numberofobjects"
-                             )
-
-for_qa <- harmony_collection$all_plates[,c('dir','row','column','dose','individual','mouse', 'group_pair',custom_feature_selection)] %>%
+for_qa <- harmony_collection$all_plates[,c(group_vars,"nuclei_numberofobjects")] %>%
   filter(!is.na(mouse)) %>%
-  rename(plate = dir,
-         h2ax = h2axpositive_infocus,
-         alexa = infocus_intensity_nucleus_alexa488_mean_mean,
-         roundness = infocus_cell_roundness_mean,
-         nuclei = nuclei_numberofobjects) %>%
+  rename(plate = dir) %>%
   mutate(individual = factor(individual), 
          fdose = factor(dose),
          plate = factor(plate), 
          row = factor(row), 
          column = factor(column)
          ) %>%
-  mutate(alexa = log10(alexa),
-         h2ax = log(h2ax),
-         nuclei = log(nuclei))
-
-# for_qa_avgs <- for_qa %>% group_by(group_pair, plate, fdose, individual,mouse) %>%
-#   summarise(h2ax = mean(h2ax, na.rm=TRUE),
-#             alexa = mean(alexa, na.rm=TRUE),
-#             roundness = mean(roundness, na.rm=TRUE),
-#             nuclei = mean (nuclei), na.rm=TRUE) %>%
-#   ungroup()
-
-# fixed effects only
-for_qa[is.na(for_qa) | for_qa == Inf | for_qa == -Inf] <- NA 
-
-for_qa <- for_qa %>% 
+  mutate(log_num_nuclei = log(nuclei_numberofobjects)) %>% 
   group_by(group_pair) %>% 
-  mutate(M = median(nuclei, na.rm =TRUE)) %>%
+  mutate(M = median(log_num_nuclei, na.rm =TRUE)) %>%
   group_by(individual, group_pair) %>%
   mutate(n = n())%>%
   add_column(bin_id = NA)
-  
 
+# fixed effects only
+for_qa[is.na(for_qa) | for_qa == Inf | for_qa == -Inf] <- NA 
+  
 # loop for binary color scheme ggplot
 
 for (i in 1:nrow(for_qa)){
@@ -228,7 +230,7 @@ for (i in 1:nrow(for_qa)){
 
 for_qa$bin_id <- as.character(for_qa$bin_id)
 
-baseline_me_model <- lmer(alexa ~ (1|individual) + (1|plate) + fdose, data=purrr::map_df(for_qa,rev), REML=FALSE)
+baseline_me_model <- lmer(log_num_nuclei ~ (1|individual) + (1|plate) + fdose, data=for_qa, REML=FALSE)
 
 # apply ranef
 # 4 evaluation scripts
@@ -236,27 +238,33 @@ baseline_me_model <- lmer(alexa ~ (1|individual) + (1|plate) + fdose, data=purrr
 #lme4::fixef(baseline_me_model)
 #anova(baseline_me_model)
 #ranova(baseline_me_model)
-
-
-# check inter-mouse effects
-pdf(file = "output/baseline_me_model.pdf", height = 80) 
-sjPlot::plot_model(baseline_me_model,show.values = FALSE)
-dev.off()
 ```
 
 ```{r}
-arial_grey_theme <- ggplot2::theme(
+label_facet <- function(original_var, custom_name){
+  lev <- levels(as.factor(original_var))
+  lab <- paste0(custom_name, ": ", lev)
+  names(lab) <- lev
+  return(lab)  
+}
+
+grey_theme <- ggplot2::theme(
   axis.text.x = element_text(colour="grey20", size=6, angle=90, hjust=.5, vjust=.5),
   axis.text.y = element_text(colour="grey20", size=6)
   )
+
 pdf(file = "output/do_boxplot_pairs.pdf", height = 10, width = 10)   
 
-p <- ggplot(data = for_qa) + theme(legend.position = "none") + geom_boxplot( aes(x = individual, y = nuclei, colour = bin_id), show.legend = FALSE,outlier.size = -1) + ylab("nuclei") + 
-    # geom_text(data  = p_meds, aes(x = individual, y = h2ax, label = n), 
-    #           size = 2) +
+p <- ggplot(data = for_qa) + 
+  theme(legend.position = "none") + 
+  geom_boxplot( aes(x = individual, y = log_num_nuclei, colour = bin_id), show.legend = FALSE,outlier.size = -1) + 
+  ylab("log(nuclei_numberofobjects)") + 
   geom_hline(aes(yintercept=M), colour="#d44846", linetype ='longdash') 
 
-p + facet_wrap(~group_pair, scales = "free_x")  + theme(legend.position = "none") + arial_grey_theme
+p + 
+  facet_wrap(~group_pair, scales = "free_x", labeller = labeller(group_pair = label_facet(for_qa$group_pair, "paired"))) +
+  grey_theme
+
 dev.off()
 ```
 
@@ -279,66 +287,52 @@ generate_platemap <- function(df){
   df <- df %>%
     mutate(row = toupper(letters[row]),
            column = sprintf("%02d", column),
-           dose = as.character(dose)) %>%
+           dose = as.character(dose),
+           ) %>%
     mutate(well = paste0(row,column)) %>%
-    select_('well','dir','individual','dose') %>%
-    group_by(dir) %>%
-    group_split()  %>%
-    setNames(unique(df$dir))
+    select_('well','plate','individual','dose', 'group_pair','bin_id') %>%
+    group_by(plate) %>%
+    group_split()  #%>%
+  list_names <- paste0(sapply(df, function(x) unique(x$group_pair)),"_",sapply(df, function(x) unique(as.integer(as.logical(x$bin_id))+1)))
+  names(df) <- list_names
+  return (df)
 }
 
-plot_platemap <- function(df, plot_title, feature_symbol){
-  df$plate <- df$dir
-  #print(paste("plotting",unique(df$plate)))
-    tryCatch(
-        # This is what I want to do...
-        {
-           p<-platetools::raw_map(
-                well = df$well,
-                data = df$individual,
-                  plate = 96)+
-                  ggtitle(paste0(plot_title," ", unique(df$plate)," Platemap"),
-                          subtitle = paste0('Well labels: replicate with ',feature_symbol)) +
-                shadowtext::geom_shadowtext(aes(
-                  label = paste0(df$dose),
-                  ),
-                  size = 4,
-                  show.legend  = F,
-                  fontface = "bold"
-                  ) 
-              #return (p)
-              pdf(file =  paste0("output/", plot_title, "_", unique(df$plate), ".pdf"))
-              plot(p)
-              dev.off()
-        },
-        error=function(error_message) {
-            message(error_message)
-            return(NA)
-        }
-    )
+plot_platemap <- function(df, headings, feature_symbol, output_dir){
+  tryCatch(
+      {
+         p<-platetools::raw_map(
+              well = df$well,
+              data = df$individual,
+                plate = 96)+
+                ggtitle(paste0(headings," pair"),
+                        subtitle = paste0('directory: ',unique(df$plate))) +
+              shadowtext::geom_shadowtext(aes(
+                label = paste0(df$dose),
+                ),
+                size = 4,
+                show.legend  = F,
+                fontface = "bold"
+                ) 
+            pdf(file =  paste0(output_dir, "/",headings,".pdf"))
+            plot(p)
+            dev.off()
+      },
+      error=function(error_message) {
+          message(error_message)
+          return(NA)
+      }
+  )
 }
 
-platemaps_do <- generate_platemap(do_focus_collection$all_plates)
+platemaps_do <- generate_platemap(for_qa)
+dir.create('./output/do_screen')
 for (i in 1:length(platemaps_do)){
-    plot_platemap(platemaps_do[[i]], plot_title="do_screen", "dose")
+  plot_platemap(platemaps_do[[i]], 
+                headings = paste0("do_screen_", names(platemaps_do)[i]), 
+                feature_symbol = "dose",
+                output_dir = './output/do_screen')
 }
-```
-
-### CSV for QA
-
-```{r}
-custom_feature_selection <- c("h2axpositive_infocus", "infocus_intensity_nucleus_alexa488_mean_mean",
-                             "infocus_cell_roundness_mean",
-                             "nuclei_numberofobjects",
-                             "infocus_numberofobjects"
-                             )
-do_focus_collection$all_plates$mouse <- paste0(do_focus_collection$all_plates$individual,".",do_focus_collection$all_plates$plate)
-cols_to_select <- c('dir','row','column','dose','individual','mouse', custom_feature_selection)
-for_qa <- do_focus_collection$all_plates[,cols_to_select]
-names(for_qa)[names(for_qa) == "dir"] <- "plate"
-
-
-#write.csv(for_qa, "output/arsenic_do_feature_qa.csv")
 ```
 
 ---
