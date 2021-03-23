@@ -2,7 +2,7 @@
 temp_files/*.RData
 
 # Preserve data dir structure but don't version data itself
-data/discovery_invitro/*
+data/invitro/*
 # data/discovery_invitro/.gitkeep
 
 data/discovery_invivo*
