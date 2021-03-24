@@ -54,7 +54,7 @@ library(sjPlot)
 ```{r warning=FALSE, echo = FALSE}
 # point to parent data directory
 setwd("data/invitro/")
-selected_dir <- "./do_focus_merge"
+selected_dir <- "./do_focus_merge_2"
 # Warning - this currently expects a temp_files data dir 
 # Set overwrite to TRUE when underlying data dir has been changed
 harmony_collection <- harmony_create_collection(dir = selected_dir, overwrite = FALSE)
@@ -70,54 +70,81 @@ harmony_collection$all_plates <- harmony_collection$all_plates %>%
   dplyr::rename(dose = concentration) %>%
   add_column(sex = NA, .after="individual") %>%
   mutate(mouse = paste0(gsub('_','.',individual),"_", plate)) %>%
-  dplyr::select(plate,row,column,dose,sex,individual, mouse, everything()) %>%
-  # hardcode mapped replicates to paired IDs
-   mutate(group_pair = LETTERS702[group_indices(., substr(plate,1,1), sub("\\_.*", "", dir))]) 
+  dplyr::select(plate,row,column,dose,sex,individual, mouse, everything())
+
+# delete from dC20264_B1__20200928T12_28_55Measurement_1_e5 (Z)
+# where rows are 6:8 and column is 9
+# delete from dC20255_B2__20200926T13_00_37Measurement_2_e6 (Y)
+# where rows are 1:6 and column is 10
+
+excludes <- read.csv(text = "
+dir,row,column
+dC20264_B1__20200928T12_28_55Measurement_1_e5,6,9
+dC20264_B1__20200928T12_28_55Measurement_1_e5,7,9
+dC20264_B1__20200928T12_28_55Measurement_1_e5,8,9
+dC20255_B2__20200926T13_00_37Measurement_2_e6,1,10
+dC20255_B2__20200926T13_00_37Measurement_2_e6,2,10
+dC20255_B2__20200926T13_00_37Measurement_2_e6,3,10
+dC20255_B2__20200926T13_00_37Measurement_2_e6,4,10
+dC20255_B2__20200926T13_00_37Measurement_2_e6,5,10
+dC20255_B2__20200926T13_00_37Measurement_2_e6,6,10
+")
+
+harmony_collection$all_plates <- dplyr::anti_join(harmony_collection$all_plates, excludes)
 
 # unique data cleaning
 harmony_collection$all_plates <- harmony_collection$all_plates %>% 
   filter(
   dose != 0.5, 
   individual != '11_20') %>%
-  mutate(plate=ifelse((dir=='d20223_B2_Cal__20200817T11_02_00Measurement_1_e5'), 'A2', plate)) %>%
+  # incorrect pairs
+  mutate(plate=ifelse((dir=='dC20222_B2_rerun__20200829T11_01_59Measurement_4_e9'), 'B2', plate)) %>%
+  mutate(plate=ifelse((dir=='d20222_B1_Cal__20200825T12_23_59Measurement_3_e6'), 'B1', plate)) %>%
+  mutate(plate=ifelse((dir=='d20223_B2_Cal__20200817T11_02_00Measurement_1_e9'), 'A2', plate)) %>%
   mutate(plate=ifelse((dir=='d20223_A1_Cal__20200817T17_03_14Measurement_2_e7'), 'A1', plate)) %>%
   mutate(plate=ifelse((dir=='d20223_A2_Cal__20200818T14_54_58Measurement_1_e6'), 'B2', plate)) %>%
+  mutate(plate=ifelse((dir=='d20223_B1_Cal__20200827T10_48_20Measurement_1_e7'), 'B1', plate)) %>%
+  # incomplete pairs / ensuring completion of plate column
   mutate(plate=ifelse((dir=='dC20236_B2__20200828T14_45_19Measurement_1_e8'), 'B2', plate)) %>%
   mutate(plate=ifelse((dir=='dC20255_B1__20200925T14_41_51Measurement_5_e6'), 'B1', plate)) %>%
   mutate(plate=ifelse((dir=='dC20255_B2__20200926T13_00_37Measurement_2_e6'), 'B2', plate)) %>%
   mutate(plate=ifelse((dir=='dC20236_B1__20200828T13_12_27Measurement_1_e7'), 'B1', plate)) %>%
   mutate(plate=ifelse((dir=='dC20255_B2_last3columns__20200928T09_33_41Measurement_1_e7'), 'B2', plate)) %>%
-  mutate(plate=ifelse((dir=='d20223_B1_Cal__20200827T10_48_20Measurement_1_e7'), 'B1', plate)) %>%
   mutate(plate=ifelse((dir=='dC20264_B1__20200928T12_28_55Measurement_1_e5'), 'B1', plate)) %>%
   mutate(plate=ifelse((dir=='dW20267_A1__20201002T10_37_07Measurement_1_e5'), 'A1', plate)) %>%
   mutate(plate=ifelse((dir=='dW20267_A2__20201004T15_35_00Measurement_1_e5'), 'A2', plate)) %>%
   mutate(plate=ifelse((dir=='dW20267_B1__20201004T12_18_54Measurement_2_e5'), 'B1', plate)) %>%
   mutate(plate=ifelse((dir=='dW20267_B2__20201002T12_32_44Measurement_2_e5'), 'B2', plate)) %>%
-  # replace last 3 columns 
-  mutate(keep = ifelse((dir=='dC20255_B2__20200926T13_00_37Measurement_2_e6' & column < 10),'keep',
-                ifelse((dir=='dC20264_B1__20200928T12_28_55Measurement_1_e5' & column < 9),'keep',
-                ifelse((dir %notin% c('dC20264_B1__20200928T12_28_55Measurement_1_e5','dC20255_B2__20200926T13_00_37Measurement_2_e6')), 'keep','remove')))) %>%
-  # final coat 
-  # mutate(group_pair=ifelse((dir=='d20222_B1_Cal__20200825T12_23_59Measurement_3_e6'), 'ZZ', group_pair)) %>%
-  # mutate(group_pair=ifelse((dir=='dC20222_B2_rerun__20200829T11_01_59Measurement_4_e6'), 'ZZ', group_pair)) %>%
-  filter(keep == 'keep') #%>% 
-  #purrr::discard(~sum(is.na(.x))/length(.x)* 100 >=50)
+   mutate(dir=ifelse((dir=='dC20255_B2_last3columns__20200928T09_33_41Measurement_1_e7'), 'dC20255_B2__20200926T13_00_37Measurement_2_e6', dir)) %>%
+  mutate(dir=ifelse((dir=='dC20264_B1_last3__20200928T13_26_45Measurement_1_e5'), 'dC20264_B1__20200928T12_28_55Measurement_1_e5', dir)) %>%
+  # hardcode mapped replicates to paired IDs
+   mutate(group_pair = LETTERS702[group_indices(., substr(plate,1,1), sub("\\_.*", "", dir))])
+
+rm(excludes) #cleanup env
 ```
 
-### Quick QA Tests
+### QA/QC
 
-- QA graveyard
+- Code graveyard
 
 ```{r}
-# check <- harmony_collection$all_plates %>% 
-#   mutate(a = paste0(substr(plate,1,2), "_",substr(dir,1,10)))
+# check <- harmony_collection$all_plates %>%
+# mutate(a = paste0(substr(plate,1,2), "_",substr(dir,1,10)))
 # table(check$plate,check$group_pair)
+# check %>% group_by(group_pair, plate) %>% tally()
+# check %>%                            
+#   group_by(group_pair) %>%
+#   summarise(count = n_distinct(individual))
+# # 
+# # write.csv(table(check$individual,check$group_pair),"~/Desktop/confirm_plates.csv")
 # 
-# write.csv(table(check$individual,check$group_pair),"~/Desktop/confirm_plates.csv")
-
-#table(check$individual,check$group_pair)
-# check_pair <-subset(check,group_pair == 'V')[,c("plate","row","column","dose","group_pair","individual","dir","a","keep")]
-# table(check_pair$individual,check_pair$group_pair)
+# #table(check$individual,check$group_pair)
+# # 
+ # check_pair_1 <-subset(harmony_collection$all_plates,dir == 'dC20308_A2__20201115T11_28_12Measurement_1_e2')[,c("plate","row","column","dose","group_pair","individual","dir")]
+# #
+# check_pair_2 <-subset(check,group_pair == 'Y')[,c("plate","row","column","dose","group_pair","individual","dir","a","keep")]
+# # 
+# table(check_pair_1$row,check_pair_1$column)
 # test <- harmony_collection$all_plates
 # test$na_count <- apply(is.na(test), 1, sum)
 # test <- harmony_collection$all_plates %>%
@@ -273,6 +300,7 @@ dev.off()
 ### RDS object
 
 ```{r}
+print(paste0("temp_files/",selected_dir,'_processed.RData'))
 temp_data_storage <- paste0("temp_files/",selected_dir,'_processed.RData')
 saveRDS(harmony_collection, temp_data_storage)
 ```
