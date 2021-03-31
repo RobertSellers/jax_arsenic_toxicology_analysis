@@ -45,6 +45,7 @@ library(ggpubr) # ggplot extension
 library(lme4)
 library(lmerTest)
 library(sjPlot)
+library(nlme)
 ```
 
 # Load data
@@ -96,7 +97,8 @@ harmony_collection$all_plates <- dplyr::anti_join(harmony_collection$all_plates,
 harmony_collection$all_plates <- harmony_collection$all_plates %>% 
   filter(
   dose != 0.5, 
-  individual != '11_20') %>%
+  individual != '11_20',
+  individual != '5346') %>%
   # incorrect pairs
   mutate(plate=ifelse((dir=='dC20222_B2_rerun__20200829T11_01_59Measurement_4_e9'), 'B2', plate)) %>%
   mutate(plate=ifelse((dir=='d20222_B1_Cal__20200825T12_23_59Measurement_3_e6'), 'B1', plate)) %>%
@@ -118,7 +120,7 @@ harmony_collection$all_plates <- harmony_collection$all_plates %>%
    mutate(dir=ifelse((dir=='dC20255_B2_last3columns__20200928T09_33_41Measurement_1_e7'), 'dC20255_B2__20200926T13_00_37Measurement_2_e6', dir)) %>%
   mutate(dir=ifelse((dir=='dC20264_B1_last3__20200928T13_26_45Measurement_1_e5'), 'dC20264_B1__20200928T12_28_55Measurement_1_e5', dir)) %>%
   # hardcode mapped replicates to paired IDs
-   mutate(group_pair = LETTERS702[group_indices(., substr(plate,1,1), sub("\\_.*", "", dir))])
+   mutate(group_pair = LETTERS702[group_indices(., substr(plate,1,1), sub("\\_.*", "", dir))]) 
 
 rm(excludes) #cleanup env
 ```
@@ -128,8 +130,19 @@ rm(excludes) #cleanup env
 - Code graveyard
 
 ```{r}
-# check <- harmony_collection$all_plates %>%
-# mutate(a = paste0(substr(plate,1,2), "_",substr(dir,1,10)))
+#  check <- harmony_collection$all_plates %>%
+#  mutate(a = paste0(substr(plate,1,2), "_",substr(dir,1,10)))
+# 
+# check_pair_3 <-subset(check,group_pair == 'W')[,c("plate","row","column","dose","group_pair","individual","dir")]
+
+# for (ind in unique(check$individual)){
+#   
+# }
+
+# harmony_collection$all_plates %>%
+#   group_by(individual) %>%
+#   summarise(count = n_distinct(dir))
+
 # table(check$plate,check$group_pair)
 # check %>% group_by(group_pair, plate) %>% tally()
 # check %>%                            
@@ -142,8 +155,8 @@ rm(excludes) #cleanup env
 # # 
  # check_pair_1 <-subset(harmony_collection$all_plates,dir == 'dC20308_A2__20201115T11_28_12Measurement_1_e2')[,c("plate","row","column","dose","group_pair","individual","dir")]
 # #
-# check_pair_2 <-subset(check,group_pair == 'Y')[,c("plate","row","column","dose","group_pair","individual","dir","a","keep")]
-# # 
+# check_pair_2 <-subset(check,group_pair == 'X')[,c("plate","row","column","dose","group_pair","individual","dir")]
+#
 # table(check_pair_1$row,check_pair_1$column)
 # test <- harmony_collection$all_plates
 # test$na_count <- apply(is.na(test), 1, sum)
@@ -182,17 +195,19 @@ rm(excludes) #cleanup env
 # pseudo database solution
 # you can't do this too frequently < every 2 minutes or so
 # make this a -if not exists-
-feature_metadata <- googlesheets4::read_sheet(ss = "1A6qMVGhtJykfbCQK1qq0qv5w3HfKvs8ByVSCiExc49s", sheet = 'do_screen') 
-
-# remove unmatched features from all_plates
-# this doesn't seem necessary for Founders but will need for DO
-harmony_collection$all_plates <- harmony_collection$all_plates %>% dplyr::select(-feature_metadata$name_[feature_metadata$mutuality==FALSE])
-
-# remove unmatched features from features metadata (if applicable)
-harmony_collection$features_df <- harmony_collection$features_df %>%
-  left_join(feature_metadata[,c("name_","stain","mutuality")], "name_") %>%
-  filter(mutuality) %>% # TRUE/FALSE if in DO and vice versa
-  dplyr::select(-mutuality)
+try({
+  feature_metadata <- googlesheets4::read_sheet(ss = "1A6qMVGhtJykfbCQK1qq0qv5w3HfKvs8ByVSCiExc49s", sheet = 'do_screen') 
+  
+  # remove unmatched features from all_plates
+  # this doesn't seem necessary for Founders but will need for DO
+  harmony_collection$all_plates <- harmony_collection$all_plates %>% dplyr::select(-feature_metadata$name_[feature_metadata$mutuality==FALSE])
+  
+  # remove unmatched features from features metadata (if applicable)
+  harmony_collection$features_df <- harmony_collection$features_df %>%
+    left_join(feature_metadata[,c("name_","stain","mutuality")], "name_") %>%
+    filter(mutuality) %>% # TRUE/FALSE if in DO and vice versa
+    dplyr::select(-mutuality)
+})
 ```
 
 ## Remove STDEV data
@@ -203,7 +218,7 @@ harmony_collection$features_df <- harmony_collection$features_df %>%
 harmony_collection <- remove_sd_vars(harmony_collection)
 ```
 
-# Effects modeling
+# Effects modeling & Pair-plate plotting
 
 - https://rpubs.com/mlmcternan/BC-lme
 - https://stats.stackexchange.com/questions/13166/rs-lmer-cheat-sheet
@@ -212,85 +227,291 @@ harmony_collection <- remove_sd_vars(harmony_collection)
 - https://rpubs.com/loveb/mixedmodel
 - https://rpubs.com/mcgill_linguistics/63173
 
+## Subset data selection
+
+- Aggregate dataset with expert-driven feature selection
 
 ```{r}
-feature_of_interest <- "nuclei_numberofobjects"
+features_of_interest <- data.frame("feature" = c("nuclei_numberofobjects", "infocus_intensity_cell_mitotrackerdeepred_mean_mean", "infocus_cell_mitotrackerdeepred_ser_edge_1px_mean","infocus_cell_area_mm2_mean"))
 
-group_vars <- c('dir','row','column','dose','individual','mouse', 'group_pair')
-
-for_qa <- harmony_collection$all_plates[,c(group_vars,"nuclei_numberofobjects")] %>%
+harmony_collection$analytics_subset <- harmony_collection$all_plates[,c(c('run','dir','plate','row','column','dose','individual','mouse', 'group_pair'),features_of_interest$feature)] %>%
   filter(!is.na(mouse)) %>%
-  rename(plate = dir) %>%
-  mutate(individual = factor(individual), 
+  mutate(findividual = factor(individual), 
          fdose = factor(dose),
-         plate = factor(plate), 
+         fdir = factor(dir), 
          row = factor(row), 
          column = factor(column)
          ) %>%
-  mutate(log_num_nuclei = log(nuclei_numberofobjects)) %>% 
+  mutate(log_num_nuclei = log(nuclei_numberofobjects),
+         log_mito_fluor_intensity = log(infocus_intensity_cell_mitotrackerdeepred_mean_mean),
+         log_mito_uniformity = log(infocus_cell_mitotrackerdeepred_ser_edge_1px_mean),
+         mito_area = infocus_cell_area_mm2_mean,
+         scale_log_num_nuclei = scales::rescale(log_num_nuclei, to = c(0.001, 99.999), from = range(log_num_nuclei, na.rm = TRUE, finite = TRUE)),
+         scale_log_mito_fluor_intensity = scales::rescale(log_mito_fluor_intensity, to = c(0.001, 99.999), from = range(log_mito_fluor_intensity, na.rm = TRUE, finite = TRUE)),
+         scale_log_mito_uniformity  = scales::rescale(log_mito_uniformity, to = c(0.001, 99.999), from = range(log_mito_uniformity, na.rm = TRUE, finite = TRUE)),
+         scale_mito_area = scales::rescale(mito_area, to = c(0.001, 99.999), from = range(mito_area, na.rm = TRUE, finite = TRUE))
+         ) %>% 
   group_by(group_pair) %>% 
-  mutate(M = median(log_num_nuclei, na.rm =TRUE)) %>%
+  mutate(m_log_num_nuclei = median(log_num_nuclei, na.rm =TRUE),
+         m_mito_fluor_intensity = median(log_mito_fluor_intensity, na.rm =TRUE),
+         m_log_mito_uniformity = median(log_mito_uniformity, na.rm =TRUE),
+         m_mito_area = median(mito_area, na.rm =TRUE)) %>%
   group_by(individual, group_pair) %>%
-  mutate(n = n())%>%
-  add_column(bin_id = NA)
+  mutate(n = n())
 
-# fixed effects only
-for_qa[is.na(for_qa) | for_qa == Inf | for_qa == -Inf] <- NA 
+# Convert Inf / -Inf to NA 
+harmony_collection$analytics_subset[is.na(harmony_collection$analytics_subset) | harmony_collection$analytics_subset == Inf | harmony_collection$analytics_subset == -Inf] <- NA 
   
-# loop for binary color scheme ggplot
+# loop function for binary color scheme ggplot
+harmony_collection$analytics_subset <- iterate_bin_id(harmony_collection$analytics_subset)
 
-for (i in 1:nrow(for_qa)){
-  if (i != 1){
-    if (for_qa[i,]$plate == for_qa[i-1,]$plate){
-      for_qa[i,]$bin_id <- for_qa[i-1,]$bin_id
-    }else{
-      if(for_qa[i-1,]$bin_id == 1){
-        for_qa[i,]$bin_id <- 0
-      }else{
-        for_qa[i,]$bin_id <- 1
-      }
-    }
-  }else{
-    for_qa[i,]$bin_id <- 1
+# add technician lookup
+tech_df <- read.csv("./lookups/do/technician_lookup.csv")
+
+harmony_collection$analytics_subset <- harmony_collection$analytics_subset %>%
+  left_join(tech_df, by="dir")
+
+# harmony_collection$analytics_subset$batch <- tidyr::extract_numeric(sub("\\_([0-9]+).*", "", harmony_collection$analytics_subset$dir))
+```
+
+## Baseline mixed effects 
+
+## Model evaluation
+
+```{r}
+small_font_theme <- ggplot2::theme(
+  axis.text.x = element_text(colour="grey20", size=6, angle=90, hjust=.5, vjust=.5),axis.text.y = element_text(colour="grey20", size=6))
+
+lme4_extract <- function(formula, name, df, m_list){
+
+  if (paste(as.character(format(formula))) %notin% m_list$summary_stats$formula){
+    m <- lme4::lmer(formula, data = df, REML = FALSE)
+    # summary(m)
+    formula_string <- paste(as.character(format(formula)), collapse = '')
+    fscore <- as.data.frame(anova(m))[,4]
+    #aic <- ranova(m)$AIC[length(ranova(m)$AIC)]
+    #log_lik <- ranova(m)$logLik[length(ranova(m)$logLik)]
+    m_list$summary_stats[nrow(m_list$summary_stats)+1,] <- c(
+      formula = formula_string, # formula
+      f_value = fscore, #F-score
+      aic = NA, # AIC (lower better?)
+      loglik = NA) #log likilihood (higher better?)
+    m_list$summary_stats<- m_list$summary_stats %>% distinct()
+    m_list$models <- c(m_list$models, m)
   }
+  return (m_list)
 }
 
-for_qa$bin_id <- as.character(for_qa$bin_id)
+try_plot_effects <- function(model, term, response){
+  df <- harmony_collection$analytics_subset
+  # look at this confint(model_results$models$nested_compare_b, method="Wald")
+  effects_dose <- effects::effect(term= term, mod= model)
+  effects_dose_df <- as.data.frame(effects_dose)
+  
+  effects_dose_df[,c(term)] <- as.numeric(effects_dose_df[,c(term)] )
+  ggplot() + 
+   geom_boxplot(data=df, aes_string(x = term, y = response), show.legend = FALSE, outlier.size = -1, na.rm = TRUE) +
+ geom_point(data = df, aes_string('fdose', response), na.rm = TRUE) + 
+geom_point(data=effects_dose_df, aes_string(term, y='fit'), color="blue") +
+   geom_line(data=effects_dose_df, aes_string(term, y='fit'), color="blue") +
+   geom_ribbon(data= effects_dose_df, aes_string(term,  ymin='lower', ymax='upper'), alpha= 0.3, fill="blue") +
+   labs(x=term, y=response) + small_font_theme 
+}
+```
 
-baseline_me_model <- lmer(log_num_nuclei ~ (1|individual) + (1|plate) + fdose, data=for_qa, REML=FALSE)
+### Generate ME models
+
+```{r}
+# combine everything for quick outputs
+multi_process_v1 <- function(data, formula_list, predictor){
+  # build object
+  
+  formula_list <- sapply(formula_list, function(x) as.formula(paste(predictor,x)))
+  
+  model_results <- list(summary_stats = data.frame(formula = character(),
+                          f_value = numeric(),
+                          aic = numeric(),
+                          loglik = numeric()),
+                          models = list(),
+                          plots_1 = list())
+  
+  # loop through each lme4 formula and save model
+  for (formula_ in names(formula_list)){
+    print(as.character(formula_))
+    model_results <- lme4_extract(
+      formula_list[[formula_]],
+      df = data,  
+      m_list = model_results
+      )
+  }
+  model_results$response <- predictor
+  names(model_results$models) <- names(formula_list)
+  return(model_results)
+}
+
+plot_lme4_1 <- function(model_results){
+  plot_list <- list()
+  # the effects::effects function is poorly written
+  # need to derive these another way
+  df <- harmony_collection$analytics_subset
+  for(m in 1:length(model_results$models)){
+    plot_list[[names(model_results$models[m])]] <- try_plot_effects(
+     model = model_results$models[[m]],
+     term  = "fdose",
+     response = model_results$response
+    )
+  }
+  ggarrange(plotlist=plot_list, widths = c(2,2,2), labels = names(model_results$models))
+}
+
+factor_index_rescale <- function(fdose, estimates){
+      # rescale by factored index
+    y <- as.numeric(levels(fdose))
+    z <- findInterval(estimates, y)
+    z + ((estimates-y[z])/(y[findInterval(estimates, y)+1]-y[z]))
+}
+
+multi_process_predict <- function(data, model_results, selected_model, group_pair_, EC = 50){
+  # apply prediction results
+  data$pred <- predict(model_results$models[[selected_model]], data)
+    data <- subset(data, group_pair == group_pair_)
+    # df_ec50 = ec50estimator::estimate_EC50(pred ~ dose,
+    #                     data = data,
+    #                     isolate_col = c("individual"), 
+    #                     EC_lvl = EC,
+    #                     #strata_col =  c("group_pair"),
+    #                     interval = "none",
+    #                     fct = drc::LL.4())
+    #browser()
+    # check against drc vals
+    df_drc <- drc::drm(pred ~ dose, 
+                data = data,
+                curveid = individual,
+                type = 'continuous',
+                fct = drc::LL.4(names = c("slope", "min_value", "max_value", "ec_50")))
+    drc_coef <- drc::ED(df_drc,EC)
+    drc_coef_df <- as.data.frame(drc::ED(df_drc,EC))
+    drc_coef_df$individual <- gsub(":.*","\\1",gsub(".*e:","",row.names(drc_coef_df)))
+
+    data_merged <- merge(data, drc_coef_df, by.x=c("individual"), by.y=c("individual"))
+    
+    # rescale by factored index
+    # y <- as.numeric(levels(harmony_collection$analytics_subset$fdose))
+    # z <- findInterval(drc_coef_df$Estimate, y)
+    data_merged$rescaled_ec50 <- factor_index_rescale(harmony_collection$analytics_subset$fdose,drc_coef_df$Estimate)#data_merged$rescaled_ec50 <- #z + ((drc_coef_df$Estimate-y[z])/
+                                        #(y[findInterval(drc_coef_df$Estimate, y)+1]-y[z]))
+    #print("ok")
+
+  p <- ggplot(data_merged) + 
+     geom_point(aes_string(x = 'fdose', y = model_results$response, shape = 'plate'), 
+                color = 'orange', show.legend = TRUE, na.rm = TRUE) +
+    geom_point(aes_string(x = 'fdose', y = 'pred', shape = 'group_pair'), 
+               color="blue", size = 1, na.rm = TRUE, show.legend = FALSE) +
+  geom_vline(aes(xintercept=rescaled_ec50)) +
+    geom_text(aes(x = (rescaled_ec50+0.25), y = 1, label = paste0("EC",EC,"  ",round(Estimate,4)), group= NULL),color = '#00008b', show.legend = FALSE)
+  p +
+    facet_wrap(~individual, 
+               labeller = labeller(group_pair_ = label_facet(data_merged$individual, paste0(" ", data_merged$Estimate))
+                                   )) +
+    small_font_theme +
+    labs(title=paste0("Paired group: ",group_pair_,"   |   lme4 Prediction versus Raw"),
+    subtitle = gsub("[[:space:]]", "", Reduce(paste, deparse((formula(model_results$models[[selected_model]])))))
+    )
+}
+```
+
+### Testing models
+
+```{r}
+
+# log_num_nuclei
+# log_mito_uniformity
+# log_mito_fluor_intensity
+# mito_area
+
+formula_list <- list(
+  "basic_a" = as.character("~ fdose + (1|dir/individual)"),
+  # next two should be the same
+  "nested_complex_c" = as.character("~ fdose + (1|group_pair/individual) + (1|dir/individual) + (dose|individual)"),
+"nested_complex_h" = as.character("~ fdose + (1|dir/mouse) + (1|individual/mouse) + (1|group_pair/individual) + (1|group_pair/dir) + (dose|individual)"),
+"nested_complex_i" = as.character("~ fdose+technician + (1|dir/mouse) + (1|individual/mouse) + (1|group_pair/individual) + (1|group_pair/dir)"),
+  "nested_complex_j" = as.character("~ fdose + (1|run/dir/mouse) + (1|run/individual/mouse) + (1|run/individual) + (1|run/dir)"),
+  "nested_complex_k" = as.character("~ fdose + (1|run/group_pair/dir/mouse) + (1|run/group_pair/individual) ")
+  # "nested_weighted" = as.character("~ fdose + (1|run/group_pair/dir/mouse) + (1|run/dir/individual) + nuclei_numberofobjects")
+  )
+
+# background remove
+# get mean zero value per individual
+# harmony_collection$analytics_subset %>% 
+#   filter(dose == 0) %>%
+#   group_by(individual,mouse,dose) %>% 
+#   summarize(m = mean(log_num_nuclei)) 
+
+model_results <- multi_process_v1(data = harmony_collection$analytics_subset,
+                                  formula_list = formula_list,
+                                  predictor = 'scale_log_mito_uniformity')
+
+# plot_lme4_1(model_results) #broke this - effects library needs replacement
+# select a preferred model
+sapply(model_results$models,anova)
+
+# example output
+multi_process_predict(data = harmony_collection$analytics_subset,
+                      model_results = model_results,
+                      selected_model = 'nested_complex_k',
+                      group_pair = 'V',
+                      EC = 20)
+```
+
+
+- check this
+https://stackoverflow.com/questions/36780357/plotting-dose-response-curves-with-ggplot2-and-drc/37043751
+# https://rpsychologist.com/r-guide-longitudinal-lme-lmer#partially-nested-models
+# consider https://ourcodingclub.github.io/tutorials/mixed-models/
+# https://stats.stackexchange.com/questions/228800/crossed-vs-nested-random-effects-how-do-they-differ-and-how-are-they-specified
+
+
+
+```{r}
+# m <- lme4::lmer(formula_list[[4]], data = harmony_collection$analytics_subset, REML = FALSE)
+# 
+# plot(m, which = 1)
+
+# baseline_me_model_log_mito_m2_lmer <- nlme::lme(log_mito_uniformity ~ fdose, random = ~1|plate/individual, data=harmony_collection$analytics_subset,
+#         na.action = na.omit)
+
+# nlme example
+# baseline_me_model_log_mito <- lme(log_mito_uniformity ~ 1, random = ~ plate | individual data=harmony_collection$analytics_subset)
 
 # apply ranef
 # 4 evaluation scripts
-#lme4::ranef(baseline_me_model)
-#lme4::fixef(baseline_me_model)
+# anova(baseline_me_model_log_mito_m2_lmer)
+# anova(baseline_me_model_log_mito_m2)
+# 
+# lme4::ranef(baseline_me_model_log_mito_m2_lmer)
+# 
+# 
+# lme4::ranef(baseline_me_model_log_mito_m2)
+# 
+# lme4::fixef(baseline_me_model_log_mito)
 #anova(baseline_me_model)
 #ranova(baseline_me_model)
 ```
 
+
+
 ```{r}
-label_facet <- function(original_var, custom_name){
-  lev <- levels(as.factor(original_var))
-  lab <- paste0(custom_name, ": ", lev)
-  names(lab) <- lev
-  return(lab)  
-}
+pdf(file = "output/do_boxplot_pairs_mito_area.pdf", height = 10, width = 10)
 
-grey_theme <- ggplot2::theme(
-  axis.text.x = element_text(colour="grey20", size=6, angle=90, hjust=.5, vjust=.5),
-  axis.text.y = element_text(colour="grey20", size=6)
-  )
+p <- ggplot(data = harmony_collection$analytics_subset) +
+  theme(legend.position = "none") +
+  geom_boxplot( aes_string(x = "individual", y = "mito_area", colour = "bin_id"), show.legend = FALSE,outlier.size = -1) +
+  ylab("mito_area") +
+  geom_hline(aes_string(yintercept="m_mito_area"), colour="#d44846", linetype ='longdash')
 
-pdf(file = "output/do_boxplot_pairs.pdf", height = 10, width = 10)   
-
-p <- ggplot(data = for_qa) + 
-  theme(legend.position = "none") + 
-  geom_boxplot( aes(x = individual, y = log_num_nuclei, colour = bin_id), show.legend = FALSE,outlier.size = -1) + 
-  ylab("log(nuclei_numberofobjects)") + 
-  geom_hline(aes(yintercept=M), colour="#d44846", linetype ='longdash') 
-
-p + 
-  facet_wrap(~group_pair, scales = "free_x", labeller = labeller(group_pair = label_facet(for_qa$group_pair, "paired"))) +
-  grey_theme
+p +
+  facet_wrap(~group_pair, scales = "free_x", labeller = labeller(group_pair = label_facet(harmony_collection$analytics_subset$group_pair, "paired"))) +
+  small_font_theme
 
 dev.off()
 ```
@@ -353,7 +574,7 @@ plot_platemap <- function(df, headings, feature_symbol, output_dir){
   )
 }
 
-platemaps_do <- generate_platemap(for_qa)
+platemaps_do <- generate_platemap(harmony_collection$analytics_subset)
 dir.create('./output/do_screen')
 for (i in 1:length(platemaps_do)){
   plot_platemap(platemaps_do[[i]], 
@@ -361,6 +582,13 @@ for (i in 1:length(platemaps_do)){
                 feature_symbol = "dose",
                 output_dir = './output/do_screen')
 }
+```
+
+### Write QC csv
+
+```{r}
+harmony_collection$all_plates[,c(c('dir','row','column','dose','individual','mouse', 'group_pair'),features_of_interest$feature)] %>%
+  write_csv("output/qa_subset.csv")
 ```
 
 ---

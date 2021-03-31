@@ -268,3 +268,27 @@ query_features <- function(data){
   all_features <- colnames(data[,start_idx:end_idx])
   return(all_features)
 }
+
+# adds binary field for plotting and pairing
+# very slow -- could use update
+iterate_bin_id <- function(df){
+  df <- df %>%
+    add_column(bin_id = NA)
+  for (i in 1:nrow(df)){
+    if (i != 1){
+      if (df[i,]$dir == df[i-1,]$dir){
+        df[i,]$bin_id <- df[i-1,]$bin_id
+      }else{
+        if(df[i-1,]$bin_id == 1){
+          df[i,]$bin_id <- 0
+        }else{
+          df[i,]$bin_id <- 1
+        }
+      }
+    }else{
+      df[i,]$bin_id <- 1
+    }
+  }
+  df$bin_id <- as.character(df$bin_id)
+  return (df)
+}

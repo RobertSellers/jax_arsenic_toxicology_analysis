@@ -64,3 +64,10 @@ VLookup <- function(this, data, key, value) {
   m <- match(this, data[[key]])
   data[[value]][m]
 }
+
+label_facet <- function(original_var, custom_name){
+  lev <- levels(as.factor(original_var))
+  lab <- paste0(custom_name, ": ", lev)
+  names(lab) <- lev
+  return(lab)  
+}
