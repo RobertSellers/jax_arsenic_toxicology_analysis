@@ -37,8 +37,6 @@ options(scipen = 999) # suppress sci notation
 source("scripts/harmony_utils.R")
 # various add-on scripts and stats tools
 source("scripts/custom_tools.R")
-# ggplot themes 
-source("scripts/ggplot_themes.R")
 # custom feature selection scripts 
 source("scripts/feature_selection.R")
 
@@ -47,19 +45,24 @@ library(janitor)
 library(ggplot2) 
 library(ggfortify)
 library(ggpubr) # ggplot extension
+library(ggrepel)
 library(lme4)
 library(lmerTest)
 library(sjPlot)
-library(nlme)
 library(ggthemes)
 library(scales)
 library(drc)
-library(medrc)
+library(magic)
+# library(medrc)
+# library(nlme)
 ```
 
 ## Visualization themes
 
 ```{r}
+# ggplot themes 
+source("scripts/ggplot_themes.R")
+
 small_font_theme <- ggplot2::theme(
   axis.text.x = element_text(colour="grey20", size=6, angle=90, hjust=.5, vjust=.5),
   axis.text.y = element_text(colour="grey20", size=6),
@@ -140,81 +143,87 @@ harmony_collection$all_plates <- harmony_collection$all_plates %>%
    mutate(dir=ifelse((dir=='dC20255_B2_last3columns__20200928T09_33_41Measurement_1_e7'), 'dC20255_B2__20200926T13_00_37Measurement_2_e6', dir)) %>%
   mutate(dir=ifelse((dir=='dC20264_B1_last3__20200928T13_26_45Measurement_1_e5'), 'dC20264_B1__20200928T12_28_55Measurement_1_e5', dir)) %>%
   # hardcode mapped replicates to paired IDs
+  # this throws an error
    mutate(group_pair = LETTERS702[group_indices(., substr(plate,1,1), sub("\\_.*", "", dir))]) 
 
 rm(excludes, LETTERS702) #cleanup env
 ```
 
-### QA/QC
-
-## Coordinated feature metadata
-- associates annotated info (e.g. individual)
-- removes data not represented in both founders + DO based on vlookup in google sheet
+## Lookup information
 
 ```{r}
-# pseudo database solution
-# you can't do this too frequently < every 2 minutes or so
-# make this a -if not exists-
-try({
-  feature_metadata <- googlesheets4::read_sheet(ss = "1A6qMVGhtJykfbCQK1qq0qv5w3HfKvs8ByVSCiExc49s", sheet = 'do_screen') 
-  
+# Lookup stain information
+# originally a google doc
+feature_metadata <- read.csv('../../lookups/do/feature_metadata.csv')
+# try({
+#   feature_metadata <- googlesheets4::read_sheet(ss = "1A6qMVGhtJykfbCQK1qq0qv5w3HfKvs8ByVSCiExc49s", sheet = 'do_screen') 
+# })
   # remove unmatched features from all_plates
   # this doesn't seem necessary for Founders but will need for DO
   harmony_collection$all_plates <- harmony_collection$all_plates %>% dplyr::select(-feature_metadata$name_[feature_metadata$mutuality==FALSE])
-  
+
   # remove unmatched features from features metadata (if applicable)
-  harmony_collection$features_df <- harmony_collection$features_df %>%
-    left_join(feature_metadata[,c("name_","stain","mutuality")], "name_") %>%
-    filter(mutuality) %>% # TRUE/FALSE if in DO and vice versa
-    dplyr::select(-mutuality)
-})
-```
-
-## Remove STDEV data
-- Targets both all_plates & feature_df currently
-
-```{r}
+harmony_collection$features_df <- harmony_collection$features_df %>%
+  left_join(feature_metadata[,c("name_","stain","mutuality")], "name_") %>%
+  filter(mutuality) %>% # TRUE/FALSE if in DO and vice versa
+  dplyr::select(-mutuality)
 # remove columns / features with pattern "stdev"
+# removes from feature_df and all_plates
 harmony_collection <- remove_sd_vars(harmony_collection)
+
+# add technician lookup
+tech_df <- read.csv("../../lookups/do/technician_lookup.csv")
+
+harmony_collection$all_plates <- harmony_collection$all_plates %>%
+  left_join(tech_df, by="dir")
 ```
 
-# Effects modeling & Pair-plate plotting
+# Data corrections
 
-- https://rpubs.com/mlmcternan/BC-lme
-- https://stats.stackexchange.com/questions/13166/rs-lmer-cheat-sheet
-- https://www.rpubs.com/actuallyykatie/thanosregdraft
-- https://rpubs.com/loveb/mm
-- https://rpubs.com/loveb/mixedmodel
-- https://rpubs.com/mcgill_linguistics/63173
-
-## Subset data selection
-
-
-```{r}
-
-```
+## Correlation sub-analysis for feature selection
 
 ```{r}
 ############ 1 ############
+# scales all data between 0 and 100 into a new object
 rescaled_data_list <- rescale_feature_df_0_100(harmony_collection$all_plates, covariates = c("dose","mouse"))
-# 
+
 # ############ 2 ############
 mouse_metrics <- mean_correlation_by_doseresponse(data = rescaled_data_list,  group_id = 'mouse')
-# 
 # ############ 3 ############
+# add completion NA %
 results <- suppressWarnings(filter_exceedances(list_data = mouse_metrics, # input list object
-                                               n = 20, # maximum number of values to return
+                                               n = 50, # maximum number of values to return
                                                corr_cut_off = 0.6, # makes underlying values positive
                                                rank_by = 'stdev')) # this is the only current
 ```
 
+## Initial data selection
+
 ```{r}
-features_of_interest <- data.frame("feature" = c("nuclei_numberofobjects", "infocus_intensity_cell_mitotrackerdeepred_mean_mean", "infocus_cell_mitotrackerdeepred_ser_edge_1px_mean","infocus_cell_area_mm2_mean"))
+hoescht_features <- data.frame("feature" = c(
+  "multi_nucleated_cells_numberofobjects", # similar
+  "infocus_intensity_cell_hoechst_mean_mean", # similar
+  "infocus_nucleus_hoechst_ser_dark_1px_mean", 
+  "infocus_nucleus_hoechst_ser_edge_1px_mean", # similar
+  ))
 
-features_of_interest_2 <- data.frame("feature" = c("stressed_h2axpositive_mean", "infocus_unstressed_mean", "h2axpositive_cell_roundness_mean","stressed_numberofspots_mean")) # extremely high variance throughout
+mitotracker_features <- data.frame("feature" = c(
+  "nuclei_numberofobjects", # similar
+  "infocus_intensity_cell_mitotrackerdeepred_mean_mean", # similar
+  "infocus_cell_area_mm2_mean",
+  "infocus_cell_mitotrackerdeepred_ser_edge_1px_mean" # similar
+  ))
+```
 
-harmony_collection$analytics_subset <- harmony_collection$all_plates[,c(c('run','dir','plate','row','column','dose','individual','mouse', 'group_pair'),features_of_interest$feature)] %>%
-  filter(!is.na(mouse)) %>%
+## Effects modeling & Pair-plate plotting
+
+## Copy a dataset for analytics / experimental work
+
+```{r}
+features_selected <- c(hoescht_features$feature,mitotracker_features$feature)
+
+harmony_collection$analytics_subset <- harmony_collection$all_plates[,c(c('run','dir','plate','row','column','dose','individual','mouse', 'group_pair'),features_selected)] %>%
+  #filter(!is.na(mouse)) %>% # shouldn't need this
   mutate(findividual = factor(individual), 
          fplate_idx = factor(substrRight(plate,1)),
          fdose = factor(dose),
@@ -222,40 +231,33 @@ harmony_collection$analytics_subset <- harmony_collection$all_plates[,c(c('run',
          frow = factor(row), 
          fplate = factor(plate),
          fcolumn = factor(column)
-         ) %>%
-  mutate(log_num_nuclei = log(nuclei_numberofobjects),
-         log_mito_fluor_intensity = log(infocus_intensity_cell_mitotrackerdeepred_mean_mean),
-         log_mito_uniformity = log(infocus_cell_mitotrackerdeepred_ser_edge_1px_mean),
-         log_mito_area = log(infocus_cell_area_mm2_mean),
-         scale_log_num_nuclei = scales::rescale(log_num_nuclei, to = c(0.001, 99.999), from = range(log_num_nuclei, na.rm = TRUE, finite = TRUE)),
-         scale_log_mito_fluor_intensity = scales::rescale(log_mito_fluor_intensity, to = c(0.001, 99.999), from = range(log_mito_fluor_intensity, na.rm = TRUE, finite = TRUE)),
-         scale_log_mito_uniformity  = scales::rescale(log_mito_uniformity, to = c(0.001, 99.999), from = range(log_mito_uniformity, na.rm = TRUE, finite = TRUE)),
-         scale_log_mito_area = scales::rescale(log_mito_area, to = c(0.001, 99.999), from = range(log_mito_area, na.rm = TRUE, finite = TRUE))
-         ) %>% 
-  # group_by(group_pair) %>% 
-  # mutate(m_log_num_nuclei = median(log_num_nuclei, na.rm =TRUE),
-  #        m_mito_fluor_intensity = median(log_mito_fluor_intensity, na.rm =TRUE),
-  #        m_log_mito_uniformity = median(log_mito_uniformity, na.rm =TRUE),
-  #        m_mito_area = median(mito_area, na.rm =TRUE)) %>%
-  group_by(individual, group_pair) %>%
-  mutate(n = n())
+         )
+```
+
+## Transformations
+
+```{r}
+# plot distributions raw
+# 4 Mito / 4 Hoescht
+Hmisc::hist.data.frame(harmony_collection$analytics_subset[,features_selected])
+
+# log transformations
+# custom transformations here
+harmony_collection$analytics_subset[,paste0("log_",features_selected)] <- lapply(harmony_collection$analytics_subset[,features_selected], function(x) log(x))
+
+Hmisc::hist.data.frame(harmony_collection$analytics_subset[,paste0("log_",features_selected)])
+
+# rescale all to new range
+harmony_collection$analytics_subset[,paste0("scaled_log_",features_selected)] <- lapply(harmony_collection$analytics_subset[,paste0("log_",features_selected)], function(x) scales::rescale(x, to = c(0.001, 99.999), from = range(x, na.rm = TRUE, finite = TRUE)))
+
+Hmisc::hist.data.frame(harmony_collection$analytics_subset[,paste0("scaled_log_",features_selected)])
 
 # Convert Inf / -Inf to NA 
 harmony_collection$analytics_subset[is.na(harmony_collection$analytics_subset) | harmony_collection$analytics_subset == Inf | harmony_collection$analytics_subset == -Inf] <- NA 
-  
+
 # loop function for binary color scheme ggplot
+# consider moving this to beginning
 harmony_collection$analytics_subset <- iterate_bin_id(harmony_collection$analytics_subset)
-```
-
-### Effects lookups
-
-```{r}
-# add technician lookup
-setwd("../../lookups/do/")
-tech_df <- read.csv("technician_lookup.csv")
-
-harmony_collection$analytics_subset <- harmony_collection$analytics_subset %>%
-  left_join(tech_df, by="dir")
 ```
 
 ## Baseline mixed effects 
@@ -265,12 +267,9 @@ harmony_collection$analytics_subset <- harmony_collection$analytics_subset %>%
 ```{r}
 # batch correction lme4 auto script
 batch_correct <- function(formula_,feature, data, r.eff, target_col){
-   # browser()
-  pheno_raw <- data[,c(feature)][[1]]
+  pheno_raw <- data[,c(feature)]
   mn.pheno <- mean(pheno_raw, na.rm=TRUE)
   sd.pheno <- sd(pheno_raw, na.rm=TRUE)
-  #pheno <- data[,c(feature)][[1]]
-  # browser()
   data$pheno <- (pheno_raw - mn.pheno) / sd.pheno
   fit <- lmer(formula_, data, REML=FALSE)
   random_effects <- ranef(fit)
@@ -280,32 +279,19 @@ batch_correct <- function(formula_,feature, data, r.eff, target_col){
   pheno_adj <- (sd.pheno * pheno_sub) + mn.pheno
   return (pheno_adj)
 }
-
-boxplot_pairs <- function(filename, y, data){
-  pdf(file = filename, height = 10, width = 10)
-  p <- ggplot(data) +
-    theme(legend.position = "none") +
-    geom_boxplot( aes_string(x = "individual", y = y, colour = "bin_id"), show.legend = FALSE,outlier.size = -1) +
-    ylab(y) 
-  # browser()
-  fr <- p +
-    facet_wrap(~group_pair, scales = "free_x", 
-               labeller = labeller(group_pair = label_facet(data$group_pair, "paired"))) +
-    small_font_theme
-  print(fr)
-  dev.off()
-}
 ```
 
 ### Model testing with lmerTest::step 
+
+ - not part of pipeline / can skip
 
 ```{r}
 try(rm(baseline,before, after, test))
 
 # Set up control model
-baseline <-lmer(log_mito_uniformity ~ (1|mouse) + (1|fdose) + (1|group_pair/dir), harmony_collection$analytics_subset, REML=FALSE)  # -7790 AIC # logLik 3914.4
+baseline <-lmer(multi_nucleated_cells_numberofobjects ~ (1|mouse) + (1|fdose) + (1|group_pair/dir), harmony_collection$analytics_subset, REML=FALSE)  # -7790 AIC # logLik 3914.4
 # Experimental model
-before <-lmer(log_mito_uniformity ~ (1|individual) + (1|fdose) + (1|group_pair/dir), harmony_collection$analytics_subset, REML=FALSE) 
+before <-lmer(multi_nucleated_cells_numberofobjects ~ (1|individual) + (1|fdose) + (1|group_pair/dir), harmony_collection$analytics_subset, REML=FALSE) 
 # before <-lmer(log_mito_uniformity ~ fdose*fplate_idx*log_num_nuclei  + (1 | group_pair/dir) + (1|run), data=harmony_collection$analytics_subset) 
 # before_test <- lmer(log_mito_uniformity ~ fdose * log_num_nuclei + (1 | group_pair/dir) +(1|plate)+ (dose | individual/mouse), harmony_collection$analytics_subset, REML=FALSE) # -7790 AIC # logLik 3914.4
 # employs an LRT test
@@ -323,31 +309,28 @@ anova(baseline, before, after)
 
 ## Baseline correction on group_pair:dir / group_pair
 
+- Runs generic batch formula per feature selected
+
 ```{r}
-data <- harmony_collection$analytics_subset
-# f_ <- formula(pheno ~ fdose  + (1 | group_pair/dir) + (1 | plate)) 
+# formula currently in use
+# pheno is swapped with the specific feature name
 f_ <- formula(pheno ~ (1|mouse) + (1|fdose) + (1|group_pair/dir)) 
-# 'log_num_nuclei','log_mito_uniformity','log_mito_fluor_intensity','mito_area'
-##################################################
-data$check_log_num <- batch_correct(formula_ = f_, 'scale_log_num_nuclei', data, r.eff = 'dir:group_pair',target_col = 'dir')
-# data$check_log_num <- batch_correct(formula_ = f_, 'check_log_num', data, r.eff = 'group_pair',target_col = 'group_pair')
-##################################################
-data$check_log_mito_uniformity <- batch_correct(formula_ = f_, 'scale_log_mito_uniformity', data, r.eff = 'dir:group_pair',target_col = 'dir')
+for (feature in paste0("scaled_log_",features_selected)){
+ harmony_collection$analytics_subset[,paste0("corr1_",feature)]  <- batch_correct(formula_ = f_, feature, harmony_collection$analytics_subset, r.eff = 'dir:group_pair',target_col = 'dir')
+}
 
-# data$check_log_mito_fluor_intensity <- batch_correct(formula_ = f_, 'check_log_mito_uniformity', data, r.eff = 'group_pair',target_col = 'group_pair')
-##################################################
-data$check_log_mito_area <- batch_correct(formula_ = f_, 'scale_log_mito_area', data, r.eff = 'dir:group_pair',target_col = 'dir')
-# data$check_mito_area <- batch_correct(formula_ = f_, 'check_mito_area', data, r.eff = 'group_pair',target_col = 'group_pair')
-##################################################
-data$check_log_mito_fluor_intensity <- batch_correct(formula_ = f_, 'scale_log_mito_fluor_intensity', data, r.eff = 'dir:group_pair',target_col = 'dir')
+Hmisc::hist.data.frame(harmony_collection$analytics_subset[,paste0("corr1_scaled_log_",features_selected)])
+```
 
-### 
+## Generate boxplot for paired plates (if wanted)
+
+```{r}
 setwd("../../")
-boxplot_pairs(filename = 'output/boxplot_test_log_mito_before.pdf', 
-              y ='scale_log_mito_fluor_intensity',
+boxplot_pairs(filename = 'output/boxplot_test_scale_nucleus_dark_before.pdf', 
+              y ='scale_nucleus_dark',
               data = data)
-boxplot_pairs(filename = 'output/boxplot_test_log_mito_after.pdf', 
-              y ='check_log_mito_uniformity',
+boxplot_pairs(filename = 'output/boxplot_test_scale_nucleus_dark_after.pdf', 
+              y ='check_nucleus_dark',
               data = data)
 ```
 
@@ -368,47 +351,41 @@ boxplot_pairs(filename = 'output/boxplot_test_log_mito_after.pdf',
 
 # DRC generation
 
-## Construct dataset
+## Construct aggregate dataset for Dose-response fitting
 
 ```{r}
-# additional data preparation for comparison with MEDRC
-## Avg values of y_adj on each feature per mouse (individual?)
-# check_log_num, check_log_mito_uniformity, check_log_mito_area, check_log_mito_fluor_intensity 
-data_adj <- data %>%
-  group_by(individual,dose) %>%
-  summarise(mean_check_log_num = mean(check_log_num),
-            mean_check_log_mito_uniformity = mean(check_log_mito_uniformity),
-            mean_check_log_mito_area = mean(check_log_mito_area),
-            mean_check_log_mito_fluor_intensity = mean(check_log_mito_fluor_intensity))
+harmony_collection$drc_data <- harmony_collection$analytics_subset %>%
+  group_by(individual, dose) %>%
+  summarise_at(vars(c(
+    features_selected,
+    paste0("log_",features_selected),
+    paste0("scaled_log_",features_selected),
+    paste0("corr1_scaled_log_",features_selected)
+    )), funs(m = mean(., na.rm = TRUE)))
 ```
 
 ## DRC overall curve
 
+- places model inside list
+
 ```{r}
-mall.check_log_mito_uniformity<- drc::drm(mean_check_log_mito_uniformity ~ dose, 
-  data = data_adj,
-  # separate = TRUE,
-  type = 'continuous',
-  fct = drc::LL.4())
+single_drc_list <- list()
 
-mall.check_mean_check_log_num<- drc::drm(mean_check_log_num ~ dose, 
-  data = data_adj,
-  # separate = TRUE,
-  type = 'continuous',
-  fct = drc::LL.4())
+for (feature in paste0("corr1_scaled_log_",features_selected,"_m")){
+  print(feature)
+  f_ <- formula(paste0(feature," ~ dose"))
+  try({
+    single_drc_list[[feature]] <- drc::drm(
+      f_, 
+      data = harmony_collection$drc_data,
+      #separate = TRUE, # single fit does not need to be true
+      type = 'continuous',
+      fct = drc::LL2.4())
+  })
+}
+```
 
-mall.check_log_mito_area<- drc::drm(mean_check_log_mito_area ~ dose, 
-  data = data_adj,
-  # separate = TRUE,
-  type = 'continuous',
-  fct = drc::LL.4())
-
-mall.check_log_mito_fluor_intensity<- drc::drm(mean_check_log_mito_fluor_intensity ~ dose, 
-  data = data_adj,
-  # separate = TRUE,
-  type = 'continuous',
-  fct = drc::LL.4())
-
+```{r}
 drc_to_ggplot_df <- function(m, df){
   # converts drc output to ggplotable df
   pl <- plot(m, xlab = "Dose (ppm)", ylab = "Response", 
@@ -418,15 +395,14 @@ drc_to_ggplot_df <- function(m, df){
   return (pl)
 }
 
-pl1 <- drc_to_ggplot_df(mall.check_log_mito_fluor_intensity, data_adj)
-pl2 <- drc_to_ggplot_df(mall.check_log_mito_area, data_adj)
-pl3 <- drc_to_ggplot_df(mall.check_mean_check_log_num, data_adj)
-pl4 <- drc_to_ggplot_df(mall.check_log_mito_uniformity, data_adj)
+ggplot_list_ <- list()
+for (model in single_drc_list){
+  ggplot_list_[[model$dataList$names$orName]] <- drc_to_ggplot_df(model, harmony_collection$drc_data)
+}
 
-dr_curves <- rbind(pl1,pl2,pl3,pl4)
+dr_curves <- do.call(rbind, ggplot_list_)
 
-
-data_adj_stacked <- reshape2::melt(data_adj, id.vars = c('dose','individual'))
+data_adj_stacked <- reshape2::melt(cbind(harmony_collection$drc_data[,c(grepl( "corr1" , names( harmony_collection$drc_data )))],harmony_collection$drc_data[,c("individual","dose")]), id.vars = c('dose','individual'))
 
 ggplot(data= dr_curves, 
        mapping=aes(x=dose, y=response, group = Feature, color = Feature)
@@ -434,8 +410,8 @@ ggplot(data= dr_curves,
   geom_line(data=dr_curves, aes(x=dose, y = response)) +
   lims(y=c(0, 100), x = c(-.1,5.1)) +
 small_font_theme + 
-  scale_x_continuous(labels = unique(data_adj$dose),
-    breaks = unique(data_adj$dose),
+  scale_x_continuous(labels = unique(harmony_collection$drc_data$dose),
+    breaks = unique(harmony_collection$drc_data$dose),
     # expand=expand_scale(mult = c(0.5, 2)),
      trans = trans_new("logpeps",
                  function(y) {
@@ -444,9 +420,9 @@ small_font_theme +
                  function(x) {
                    (x)^(3)
                    },
-                 domain=c(min(data_adj$dose),Inf)
+                 domain=c(min(harmony_collection$drc_data$dose),Inf)
     ))+ 
-  ggtitle("Average Dose Response Curve per DO mouse\n4 MitoTracker Features") +
+  ggtitle("Average Dose Response Curve per DO mouse") +
   xlab("Arsenic Dose (ppm)") + ylab("Outcome Scaled") + theme(legend.position="right") + 
   geom_jitter(data = data_adj_stacked,
                  aes(x=dose, y=value, group=dose, color = variable, shape='.',ra.rm = TRUE), 
@@ -454,176 +430,239 @@ small_font_theme +
                  ra.rm = TRUE,
               size = 0.3,
               show.legend = FALSE
-               )
+               )#+ theme(legend.position="none")
 ```
 
 ## DRC per mouse fit
 
-- testing on subset of data
+- separate == FALSE will decrease chances of convergence
 
 ```{r}
-set.seed(15)
-subset_n <- data_adj %>% 
-  group_by(individual) %>% 
-  sample_n_groups(40)
+# need to add features_selected!
+apply_drc_fit <- function(data,
+                          features_selected,
+                          form_name,
+                          formula_,
+                          separate,
+                          type_){
+  multi_drc_list <- list()
+  test <- data  %>%
+    group_by(individual)
+  for (feature in paste0("corr1_scaled_log_",features_selected,"_m")){
+    print(feature)
+    f_ <- formula(paste0(feature," ~ dose"))
+    try_fail <- "fail"
+    
+    try({
+      multi_drc_list[[feature]] <- drc::drm(f_, data = test,
+      separate = separate,
+      curveid = individual,
+      na.action = na.omit,
+      type = type_,
+      fct = formula_)
+      try_fail <- "pass"
+    })
+  }
+  return (multi_drc_list)
+}
+seek_drc_fit <- function(data, 
+                         drc_success_lookup, 
+                         seed_id, 
+                         sample_n, 
+                         separate,
+                         type_, 
+                         form_name, 
+                         formula_){
+  # generate log of samples, n 
+  # find patterns of failure
+  log_list <- list()
+  multi_drc_list <- list()
+  set.seed(seed_id)
+  test <- data  %>%
+    group_by(individual) %>%
+    sample_n_groups(sample_n) 
+for (feature in paste0("corr1_scaled_log_",features_selected,"_m")){
+  
+  print(feature)
+  f_ <- formula(paste0(feature," ~ dose"))
+  try_fail <- "fail"
+  # look up best available
+  sub_lu <- subset(drc_success_lookup, name == feature & n_samples == sample_n)
 
-m.check_log_mito_uniformity<- drc::drm(mean_check_log_mito_uniformity ~ dose, 
-  data = subset_n,
-  # separate = TRUE,
-  curveid = individual,
-  type = 'continuous',
-  fct = drc::LL.4())
+    try({
+      multi_drc_list[[feature]] <- drc::drm(f_, data = test,
+      separate = separate,
+      curveid = individual,
+      na.action = na.omit,
+      type = type_,
+      fct = formula_)
+      try_fail <- "pass"
+    })
 
-m.check_log_num <- drc::drm(mean_check_log_num ~ dose, 
-  data = subset_n,
-  # separate = TRUE,
-  curveid = individual,
-  type = 'continuous',
-  fct = drc::LL.4())
+    log_list[[feature]] <- list("pass" = try_fail,
+                          "samples" = unique(test$individual),
+                          "seed" = seed_id,
+                          "separate" = separate,
+                          "n_samples" = sample_n,
+                          "formula" = form_name,
+                          "type" = type_)
+  
+}
+  qa_drc_sampling <- data.frame(
+  
+  "pass" = do.call("rbind", lapply(log_list, "[[", "pass")),
+  "n_samples" = do.call("rbind", lapply(log_list, "[[", "n_samples")),
+  "separate" = do.call("rbind", lapply(log_list, "[[", "separate")),
+  "seed" = do.call("rbind", lapply(log_list, "[[", "seed")),
+  "formula" = do.call("rbind", lapply(log_list, "[[", "formula")),
+  "type" = do.call("rbind", lapply(log_list, "[[", "type")))
 
-m.check_log_mito_area <- drc::drm(mean_check_log_mito_area ~ dose, 
-  data = subset_n,
-  # separate = TRUE,
-  curveid = individual,
-  type = 'continuous',
-  fct = drc::LL.4())
+  qa_drc_sampling$name <- rownames(qa_drc_sampling)
+  rownames(qa_drc_sampling) <- NULL
+  return (qa_drc_sampling)
+}
 
-m.check_log_mito_fluor_intensity <- drc::drm(mean_check_log_mito_fluor_intensity ~ dose, 
-  data = subset_n,
-  # separate = TRUE,
-  curveid = individual,
-  type = 'continuous',
-  fct = drc::LL.4())
+models_to_ec50s <- function (m_list){
+    ed50s_ll2.4 <- lapply(m_list, function(m) as.data.frame(suppressWarnings(drc::ED(m,50, interval = "fls", lref = 0, uref = 5))))
+  ed50s_extract_ll2.4 <- as.data.frame(do.call("cbind", lapply(ed50s_ll2.4, function(x) {x$Estimate})))
+  
+  # hacky
+  # Convert Inf / -Inf to NA 
+  ed50s_extract_ll2.4[is.na(ed50s_extract_ll2.4) | ed50s_extract_ll2.4 == Inf | ed50s_extract_ll2.4 == -Inf] <- NA 
+  
+  # Optional quality checking
+  ed50s_extract_ll2.4[ed50s_extract_ll2.4 >= 5 | ed50s_extract_ll2.4 <= 0] <- NA 
+  ed50s_extract_ll2.4$individual <- stringi::stri_sub(as.character(rownames(ed50s_ll2.4[[1]])),3,-4) 
+  return (ed50s_extract_ll2.4)
+}
 
-layout(matrix(c(1,2,3,4), 2, 2, byrow = TRUE))
-plot(m.check_log_mito_fluor_intensity, 
-     main="m.check_log_mito_fluor_intensity", 
-     xlab="Concentration (ppm)", ylab="% control", 
-     col="blue", pch=16)
-plot(m.check_log_mito_area, 
-     main="m.check_log_mito_area", 
-     xlab="Concentration (ppm)", ylab="% control", 
-     col="blue", pch=16)
-plot(m.check_log_mito_uniformity, 
-     main="m.check_log_mito_uniformity", 
-     xlab="Concentration (ppm)", ylab="% control", 
-     col="blue", pch=16)
-plot(m.check_log_num, 
-     main="m.check_log_num", 
-     xlab="Concentration (ppm)", ylab="% control", 
-     col="blue", pch=16)
+# CAREFUL THIS WILL REWRITE CONVERGENCE MEMORY
+drc_success_lookup <- data.frame(matrix(ncol = 7, nrow = 0))
+colnames(drc_success_lookup) <-   c("name","pass","n_samples","separate","seed","formula","type")
 ```
 
+## Evaluate model success
+
+- preview drc_success_lookup
+
+```{r}
+fct_list <- list("LL2.4" = LL2.4, "LL.5"=LL.5, "LL.4"=LL.4)
+type_list <- c("continuous")
+for (j in 1:length(type_list)){
+  for (i in 1:length(fct_list)){
+    print(paste0("testing on ",type_list[j], " ", names(fct_list)[i]))
+    qa_drc_sampling <- seek_drc_fit(data = harmony_collection$drc_data,
+                 drc_success_lookup = drc_success_lookup,
+                 seed_id = 4,
+                 sample_n = length(unique(harmony_collection$drc_data$individual)),
+                 separate = TRUE,
+                 type_ = type_list[j], # Poisson or continuous
+                 form_name = names(fct_list)[i],
+                 formula_ = fct_list[[i]]() # LL.3, LL.4,LL.5,W1.4,W2.4
+                 )
+      # add successful models if parameters are new and model passed above
+    drc_success_lookup <- distinct(rbind(drc_success_lookup,qa_drc_sampling[ qa_drc_sampling$pass == 'pass',]))
+  }
+}
+
+# show current success / failure
+table(drc_success_lookup$formula, drc_success_lookup$type)
+```
+
+## Apply fit
+
+- universal application of ll2.4 log fit
+
+- functionality not generic enough
+
+```{r}
+multi_drc_list_ll2.4 <- apply_drc_fit(
+  harmony_collection$drc_data,
+  features_selected, # just take all
+  "LL2.4",
+  fct_list[[1]](),
+  separate = TRUE,
+  type_ = 'continuous'
+)
+
+ed50s_extract_ll2.4 <- models_to_ec50s(multi_drc_list_ll2.4)
+ed50s_extract_ll2.4_stacked <- reshape2::melt(ed50s_extract_ll2.4, id.vars = c('individual')) 
+```
 
 ## Accumulate ED50s
 
 - scatter plot
 
+
 ```{r}
-ed50s_mitotracker <- data.frame(
-  "individual" = row.names(ED(m.check_log_mito_uniformity,50, interval = "delta")),
-  "log_mito_uniformity" = as.data.frame(drc::ED(m.check_log_mito_uniformity,50, interval = "delta"))$Estimate,
-  "log_mito_fluor_intensity" = as.data.frame(drc::ED(m.check_log_mito_fluor_intensity,50, interval = "delta"))$Estimate,
-  "log_num_nuclei" = as.data.frame(drc::ED(m.check_log_num,50, interval = "delta"))$Estimate,
-  "log_mito_area" = as.data.frame(drc::ED(m.check_log_mito_area,50, interval = "delta"))$Estimate
-)
-ed50s_stacked <- reshape2::melt(ed50s_mitotracker, id.vars = c('individual')) 
-ed50s_predicted <- data.frame(
-  "individual" = ed50s_mitotracker$individual,
-  "log_mito_area" = predict(m.check_log_mito_area, data.frame(
-  "log_mito_area" = ed50s_mitotracker$log_mito_area)),
-  "log_num_nuclei" = predict(m.check_log_num, data.frame(
-  "log_num_nuclei" = ed50s_mitotracker$log_num_nuclei)),
+quick_pca <- function(f_, data, title){
+ 
+  theme<-theme(panel.background = element_blank(),panel.border=element_rect(fill=NA),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),strip.background=element_blank(),axis.text.x=element_text(colour="black"),axis.text.y=element_text(colour="black"),axis.ticks=element_line(colour="black"),plot.margin=unit(c(1,1,1,1),"line"))
 
-"log_mito_fluor_intensity" = predict(m.check_log_mito_fluor_intensity, data.frame(
-  "log_mito_fluor_intensity" = ed50s_mitotracker$log_mito_fluor_intensity))
-,
-"log_mito_uniformity" = predict(m.check_log_mito_uniformity, data.frame(
-  "log_mito_uniformity" = ed50s_mitotracker$log_mito_uniformity))
-  )
+  handle_data <- na.omit(data)
+  pca.a <- prcomp(f_, data = handle_data, scale=TRUE)
+  df_out <- as.data.frame(pca.a$x)
+  df_out$feature <- unique(handle_data$individual)
+  df_out$as_dose_sensitivity <- handle_data$as_dose_sensitivity
+   percentage <- round(pca.a$sdev / sum(pca.a$sdev) * 100, 2)
+percentage <- paste( colnames(df_out), "(", paste( as.character(percentage), "%", ")", sep="") )
+  ap1<-ggplot(df_out,aes(x=PC1,y=PC2,label=feature, color = as_dose_sensitivity))
+  ap <- ap1 + geom_point(size = 0.2)+theme + xlab(percentage[1]) + ylab(percentage[2])+ geom_text(size=2)
 
-ed50s_pred_w_ed50 <- merge(ed50s_stacked, reshape2::melt(ed50s_predicted, id.vars = c('individual')) , by=c("individual","variable")) %>%
-  dplyr::rename(ed50 = value.x,response = value.y)
+  ap + ggtitle(title)
+}
 
-d <- plotly::highlight_key(ed50s_pred_w_ed50, ~stringi::stri_sub(individual,3,-4) )
+# sub <- subset(harmony_collection$analytics_subset, individual %in% 
+#          unique(subset_n2$individual))
+formula_pca <- formula("~ corr1_scaled_log_infocus_intensity_cell_hoechst_mean_mean_m + corr1_scaled_log_infocus_nucleus_hoechst_ser_edge_1px_mean_m + corr1_scaled_log_infocus_nucleus_hoechst_ser_dark_1px_mean_m + corr1_scaled_log_multi_nucleated_cells_numberofobjects_m + 
+corr1_scaled_log_infocus_cell_area_mm2_mean_m+
+corr1_scaled_log_nuclei_numberofobjects_m +
+corr1_scaled_log_infocus_intensity_cell_mitotrackerdeepred_mean_mean_m +
+corr1_scaled_log_infocus_cell_mitotrackerdeepred_ser_edge_1px_mean_m")
 
-gg_scatter_mito <- ggplot(d, aes(x=ed50, 
-                                 y=response, 
-                                 colour = variable,
-                                 group = variable)) +
-  geom_point(shape='.', size =1) + 
-  
-  ggtitle("ED50s 4 MitoTracker Features") +
-  theme_Publication()
-  # ggrepel::geom_text_repel(
-  #   aes(label=stringi::stri_sub(individual,3,-4)), 
-  #   size = 2)+
-  #xlim(-0.1, 5.1) 
-gg_scatter_mito_plotly <- plotly::ggplotly( gg_scatter_mito, mode = "lines",tooltip = ".crossTalkKey")
-plotly::highlight( gg_scatter_mito_plotly, on = "plotly_hover", off = "plotly_deselect", color = "red" )
+# bin by average sensitivity
+ed50s_extract_ll2.4$as_dose_sensitivity <- NULL
+ed50s_extract_ll2.4$as_dose_sensitivity <- cut(rowMeans(ed50s_extract_ll2.4[ ,!(colnames(ed50s_extract_ll2.4) == "individual")], na.rm = TRUE), 5) 
+
+
+quick_pca(formula_pca, ed50s_extract_ll2.4, "Corrected EC50s colored by sensitivity")
+
+```
+
+### PCA on Ec50s
+
+```{r}
+# compare.pca.a <- prcomp(formula_pca, data = ed50s_mitotracker)
+# 
+# rownames(ed50s_mitotracker) <- stringi::stri_sub(ed50s_mitotracker$individual,3,-4) 
+# a_p<-autoplot(compare.pca.a, title = 'raw',data = ed50s_mitotracker, , loadings = TRUE, labels.repel = T, labels.text = 'individual' , loadings.label = TRUE, shape = FALSE,label.size = 2,loadings.label.repel=T,loadings.label.size = 2) +  theme(legend.position = "none")
+# a_p + ggtitle("EC50s Hoescht features with lme4 correction")
 
 ```
 
 ```{r}
-# reproduce in medrc
-medrc_subset <- subset(harmony_collection$analytics_subset, individual %in% unique(data_adj$individual))
-
-# data_adj_for_medrc <- medrc_subset %>%
-#   group_by(individual,fdose) %>%
-#   summarise(mean_check_log_num = mean(log_num_nuclei),
-#             mean_check_log_mito_uniformity = mean(log_mito_fluor_intensity),
-#             mean_check_log_mito_area = mean(log_mito_uniformity),
-#             mean_check_log_mito_fluor_intensity = mean(log_mito_area)) %>%
-#   right_join(medrc_subset) %>% 
-#   dplyr::select(dir,
-#                 dose,
-#                 fdose,
-#                 findividual,
-#                 individual,
-#                 mouse,
-#                 mean_check_log_num,
-#                 mean_check_log_mito_uniformity,
-#                 mean_check_log_mito_area,
-#                 mean_check_log_mito_fluor_intensity)
-
-
-
- # mutate(log_num_nuclei = log(nuclei_numberofobjects),
- #         log_mito_fluor_intensity = log(infocus_intensity_cell_mitotrackerdeepred_mean_mean),
- #         log_mito_uniformity = log(infocus_cell_mitotrackerdeepred_ser_edge_1px_mean),
- #         log_mito_area = log(infocus_cell_area_mm2_mean),
-# pheno ~ (1|mouse) + (1|fdose) + (1|group_pair/dir))
-
-  # data_adj_for_medrc <- medrc_subset %>% mutate(mean_check_log_mito_area = ifelse(is.na(mean_check_log_mito_area), min(mean_check_log_mito_area, na.rm = T), mean_check_log_mito_area))
-
-  #curve specific difference to the parameter average
-medrc_subset$curve <- paste0(medrc_subset$curve,"_",medrc_subset$curve)
-medrc_subset$fmouse <- factor(medrc_subset$mouse)
-
-
-
-set.seed(13)
-medrc_subset_agg_i_10 <- harmony_collection$analytics_subset %>% group_by(group_pair) %>%
-  sample_n_groups(10) %>% 
-  group_by(dose,fdose,findividual,individual,fdir, group_pair) %>%
-  summarise(mean_scale_log_mito_area = mean(scale_log_mito_area, na.rm = TRUE)) %>%
-  group_by(fdir,individual,findividual) %>%
-  mutate(
-    # imputation -- needs refinement
-    mean_scale_log_mito_area = impute.mean(mean_scale_log_mito_area)
-  )
+# set.seed(13)
+# medrc_subset_agg_i_10 <- harmony_collection$analytics_subset %>% group_by(group_pair) %>%
+#   sample_n_groups(10) %>% 
+#   group_by(dose,fdose,findividual,individual,fdir, group_pair) %>%
+#   summarise(mean_scale_log_mito_area = mean(scale_log_mito_area, na.rm = TRUE)) %>%
+#   group_by(fdir,individual,findividual) %>%
+#   mutate(
+#     # imputation -- needs refinement
+#     mean_scale_log_mito_area = impute.mean(mean_scale_log_mito_area)
+#   )
 
 # ok? table(medrc_subset_agg_i_10$fdir,medrc_subset_agg_i_10$group_pair)
 
-  prelim_extraction <- medrc::metadrm(
-    mean_scale_log_mito_area ~ dose,
-    data = medrc_subset_agg_i_10,
-    fct = LL.4(),
-    ind = findividual, #CURVE
-    cid2 = group_pair, #HERBID
-    struct = "UN",
-    method = "REML" # or REML
-  )
+  # prelim_extraction <- medrc::metadrm(
+  #   mean_scale_log_mito_area ~ dose,
+  #   data = medrc_subset_agg_i_10,
+  #   fct = LL.4(),
+  #   ind = findividual, #CURVE
+  #   cid2 = group_pair, #HERBID
+  #   struct = "UN",
+  #   method = "REML" # or REML
+  # )
 
   #   prelim_extraction <- medrc::metadrm(
   #   mean_scale_log_mito_area ~ dose,
@@ -634,12 +673,12 @@ medrc_subset_agg_i_10 <- harmony_collection$analytics_subset %>% group_by(group_
   #   struct = "UN",
   #   method = "REML" # or REML
   # )
-  cmat <- matrix(coefficients(prelim_extraction), ncol=4)
-  m <- apply(cmat, 2, mean)
-  names(m) <- letters[2:5]
-  rmat <- t(apply(cmat, 1, function(x) x-m)) # random effect starting values
-  rownames(rmat) <- sort(unique(medrc_subset_agg_i_10$group_pair))
-  colnames(rmat) <- letters[2:5]
+  # cmat <- matrix(coefficients(prelim_extraction), ncol=4)
+  # m <- apply(cmat, 2, mean)
+  # names(m) <- letters[2:5]
+  # rmat <- t(apply(cmat, 1, function(x) x-m)) # random effect starting values
+  # rownames(rmat) <- sort(unique(medrc_subset_agg_i_10$group_pair))
+  # colnames(rmat) <- letters[2:5]
   # start_vec <- c(random_effects$dir)[[1]]
 
   # medrc.m.scale_log_mito_fluor_intensity <-medrm(
@@ -659,58 +698,58 @@ medrc_subset_agg_i_10 <- harmony_collection$analytics_subset %>% group_by(group_
   #     )
   # )
   
- medrc.m.scale_log_num_nuclei <-medrm(
-    scale_log_num_nuclei ~ dose,
-    data = medrc_subset[!is.na(medrc_subset$scale_log_num_nuclei),],
-    fct = LL.4(),
-    random = b + c + d + e ~ 1 | individual,
-    control = nlme::nlmeControl(
-      tolerance = 0.1,
-      pnlsTol = 1,
-      msMaxIter = 2000
-    )
-  )
- 
-  medrc.m.scale_log_mito_area <-medrm(
-    scale_log_mito_area ~ dose,
-    data = medrc_subset[!is.na(medrc_subset$scale_log_mito_area),],
-    fct = LL.4(),
-    random = b + c + d + e ~ 1 | individual,
-    control = nlme::nlmeControl(
-      tolerance = 0.1,
-      pnlsTol = 1,
-      msMaxIter = 2000
-    )
-  )
-   medrc.m.scale_log_mito_uniformity <- medrm(
-    scale_log_mito_uniformity ~ dose,
-    data = medrc_subset[!is.na(medrc_subset$scale_log_mito_uniformity),],
-    fct = LL.4(),
-    random = b + c + d + e ~ 1 | individual,
-    control = nlme::nlmeControl(
-      tolerance = 0.1,
-      pnlsTol = 1,
-      msMaxIter = 2000
-    )
-  )
-  medrc.m.scale_log_mito_fluor_intensity <-medrm(
-    scale_log_mito_fluor_intensity ~ dose,
-    data = medrc_subset[!is.na(medrc_subset$scale_log_mito_fluor_intensity),],
-    fct = LL.4(),
-    random = b + c + d + e ~ 1 | individual,
-    control = nlme::nlmeControl(
-      tolerance = 0.1,
-      pnlsTol = 1,
-      msMaxIter = 2000
-    )
-  )
+ # medrc.m.scale_log_num_nuclei <-medrm(
+ #    scale_log_num_nuclei ~ dose,
+ #    data = subset_n2,
+ #    fct = LL.4(),
+ #    random = b + c + d + e ~ 1 | individual,
+ #    control = nlme::nlmeControl(
+ #      tolerance = 0.1,
+ #      pnlsTol = 1,
+ #      msMaxIter = 2000
+ #    )
+ #  )
+ # 
+ #  medrc.m.scale_log_mito_area <-medrm(
+ #    scale_log_mito_area ~ dose,
+ #    data = medrc_subset[!is.na(medrc_subset$scale_log_mito_area),],
+ #    fct = LL.4(),
+ #    random = b + c + d + e ~ 1 | individual,
+ #    control = nlme::nlmeControl(
+ #      tolerance = 0.1,
+ #      pnlsTol = 1,
+ #      msMaxIter = 2000
+ #    )
+ #  )
+ #   medrc.m.scale_log_mito_uniformity <- medrm(
+ #    scale_log_mito_uniformity ~ dose,
+ #    data = medrc_subset[!is.na(medrc_subset$scale_log_mito_uniformity),],
+ #    fct = LL.4(),
+ #    random = b + c + d + e ~ 1 | individual,
+ #    control = nlme::nlmeControl(
+ #      tolerance = 0.1,
+ #      pnlsTol = 1,
+ #      msMaxIter = 2000
+ #    )
+ #  )
+ #  medrc.m.scale_log_mito_fluor_intensity <-medrm(
+ #    scale_log_mito_fluor_intensity ~ dose,
+ #    data = medrc_subset[!is.na(medrc_subset$scale_log_mito_fluor_intensity),],
+ #    fct = LL.4(),
+ #    random = b + c + d + e ~ 1 | individual,
+ #    control = nlme::nlmeControl(
+ #      tolerance = 0.1,
+ #      pnlsTol = 1,
+ #      msMaxIter = 2000
+ #    )
+ #  )
  # level 3 mouse/dir/fdose
  # level 2 mouse/fdose
  
 ```
 
 ```{r}
-plot(medrc.m.scale_log_mito_fluor_intensity, logx=TRUE, ndose=25, ranef=TRUE) +  theme(legend.position = "none")
+# plot(medrc.m.scale_log_mito_fluor_intensity, logx=TRUE, ndose=25, ranef=TRUE) +  theme(legend.position = "none")
 ```
 
 ## PCA checks
@@ -720,29 +759,29 @@ plot(medrc.m.scale_log_mito_fluor_intensity, logx=TRUE, ndose=25, ranef=TRUE) + 
 ```{r}
 # check results
 # random sample individual by plate
-data_pca <- data %>% drop_na() #%>% filter(group_pair %in% c('AH')) %>% drop_na() 
-random_ind <- subset(data_pca, group_pair %in% sample(data_pca$group_pair, 2))
-random_ind <- subset(random_ind, dose %in% sample(random_ind$dose, 1))
-compare.pca.a <- prcomp(random_ind[,c('log_num_nuclei','log_mito_uniformity','log_mito_fluor_intensity','log_mito_area')])
-compare.pca.b <- prcomp(random_ind[,c('check_log_num','check_log_mito_uniformity','check_log_mito_fluor_intensity','check_mito_area')])
-a_p<-autoplot(compare.pca.a, title = 'raw',data = random_ind, colour = 'dir', loadings = TRUE, loadings.label = TRUE, label.size = 3) +  theme(legend.position = "none")
-b_p<-autoplot(compare.pca.b, title = 'adj', data = random_ind, colour = 'dir', loadings = TRUE, loadings.label = TRUE, label.size = 3) + theme(legend.position = "none")
-figure <- ggarrange(a_p,b_p,ncol=2, labels = c("raw", "adj"))
-annotate_figure(figure, top = text_grob(paste(unique(random_ind$dose), "  ", unique(random_ind$group_pair))))
+# data_pca <- data %>% drop_na() #%>% filter(group_pair %in% c('AH')) %>% drop_na() 
+# random_ind <- subset(data_pca, group_pair %in% sample(data_pca$group_pair, 2))
+# random_ind <- subset(random_ind, dose %in% sample(random_ind$dose, 1))
+# compare.pca.a <- prcomp(random_ind[,c('log_num_nuclei','log_mito_uniformity','log_mito_fluor_intensity','log_mito_area')])
+# compare.pca.b <- prcomp(random_ind[,c('check_log_num','check_log_mito_uniformity','check_log_mito_fluor_intensity','check_mito_area')])
+# a_p<-autoplot(compare.pca.a, title = 'raw',data = random_ind, colour = 'dir', loadings = TRUE, loadings.label = TRUE, label.size = 3) +  theme(legend.position = "none")
+# b_p<-autoplot(compare.pca.b, title = 'adj', data = random_ind, colour = 'dir', loadings = TRUE, loadings.label = TRUE, label.size = 3) + theme(legend.position = "none")
+# figure <- ggarrange(a_p,b_p,ncol=2, labels = c("raw", "adj"))
+# annotate_figure(figure, top = text_grob(paste(unique(random_ind$dose), "  ", unique(random_ind$group_pair))))
 ```
 
 ```{r}
 ### differences between plates on 2 group_pairs and a single dose
 
 # set.seed(4)
-random_ind <- subset(data, group_pair %in% sample(data$group_pair, 2))
-random_ind <- subset(random_ind, dose %in% sample(random_ind$dose, 1))
-compare.pca.a <- prcomp(random_ind[,c('log_num_nuclei','log_mito_uniformity','log_mito_fluor_intensity','log_mito_area')], scale = TRUE)
-compare.pca.b <- prcomp(random_ind[,c('check_log_num','check_log_mito_uniformity','check_log_mito_fluor_intensity','check_mito_area')], scale = TRUE)
-a_p<-autoplot(compare.pca.a, title = 'raw',data = random_ind, colour = 'individual', loadings = TRUE, loadings.label = TRUE, label.size = 3) +  theme(legend.position = "none")
-b_p<-autoplot(compare.pca.b, title = 'adj', data = random_ind, colour = 'individual', loadings = TRUE, loadings.label = TRUE, label.size = 3) + theme(legend.position = "none")
-figure <- ggarrange(a_p,b_p,ncol=2, labels = c("raw", "adj"))
-annotate_figure(figure, top = text_grob(paste(unique(random_ind$dose), "  ", paste0(unique(random_ind$group_pair[1]))," ",unique(random_ind$group_pair)[2])))
+# random_ind <- subset(data, group_pair %in% sample(data$group_pair, 2))
+# random_ind <- subset(random_ind, dose %in% sample(random_ind$dose, 1))
+# compare.pca.a <- prcomp(random_ind[,c('log_num_nuclei','log_mito_uniformity','log_mito_fluor_intensity','log_mito_area')], scale = TRUE)
+# compare.pca.b <- prcomp(random_ind[,c('check_log_num','check_log_mito_uniformity','check_log_mito_fluor_intensity','check_mito_area')], scale = TRUE)
+# a_p<-autoplot(compare.pca.a, title = 'raw',data = random_ind, colour = 'individual', loadings = TRUE, loadings.label = TRUE, label.size = 3) +  theme(legend.position = "none")
+# b_p<-autoplot(compare.pca.b, title = 'adj', data = random_ind, colour = 'individual', loadings = TRUE, loadings.label = TRUE, label.size = 3) + theme(legend.position = "none")
+# figure <- ggarrange(a_p,b_p,ncol=2, labels = c("raw", "adj"))
+# annotate_figure(figure, top = text_grob(paste(unique(random_ind$dose), "  ", paste0(unique(random_ind$group_pair[1]))," ",unique(random_ind$group_pair)[2])))
 ```
 
 - check this
@@ -838,21 +877,21 @@ plot_platemap <- function(df, headings, feature_symbol, output_dir){
   )
 }
 
-platemaps_do <- generate_platemap(harmony_collection$analytics_subset)
-dir.create('./output/do_screen')
-for (i in 1:length(platemaps_do)){
-  plot_platemap(platemaps_do[[i]], 
-                headings = paste0("do_screen_", names(platemaps_do)[i]), 
-                feature_symbol = "dose",
-                output_dir = './output/do_screen')
-}
+# platemaps_do <- generate_platemap(harmony_collection$analytics_subset)
+# dir.create('./output/do_screen')
+# for (i in 1:length(platemaps_do)){
+#   plot_platemap(platemaps_do[[i]], 
+#                 headings = paste0("do_screen_", names(platemaps_do)[i]), 
+#                 feature_symbol = "dose",
+#                 output_dir = './output/do_screen')
+# }
 ```
 
 ### Write QC csv
 
 ```{r}
-harmony_collection$all_plates[,c(c('dir','row','column','dose','individual','mouse', 'group_pair'),features_of_interest$feature)] %>%
-  write_csv("output/qa_subset.csv")
+# harmony_collection$all_plates[,c(c('dir','row','column','dose','individual','mouse', 'group_pair'),features_of_interest$feature)] %>%
+#   write_csv("output/qa_subset.csv")
 ```
 
 ---
