@@ -1,0 +1,95 @@
+---
+title: "DO #1a LMER custom test"
+author:
+- name: Robert Sellers
+  affiliation: The Jackson Laboratory
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
+abstract: |
+latex_engine: pdflatex
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    number_sections: true
+    theme: lumen
+    toc: yes
+    toc_float: yes
+    df_print: paged
+    # code_folding: "hide"
+  pdf_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pyments
+    keep_tex: yes
+    latex_engine: xelatex
+    number_sections: no
+    toc: no
+    
+---
+
+# Programming environment
+
+```{r message=FALSE}
+library(rstan)
+
+dat <- list(
+  "N" = 27,  
+  "x" =
+    c(1, 1.5, 1.5, 1.5, 2.5, 4, 5, 5, 7, 8, 8.5, 9, 9.5, 9.5, 10, 
+      12, 12, 13, 13, 14.5, 15.5, 15.5, 16.5, 17, 22.5, 29, 31.5),
+  "Y" =
+    c(1.8, 1.85, 1.87, 1.77, 2.02, 2.27, 2.15, 2.26, 2.47, 2.19, 
+      2.26, 2.4, 2.39, 2.41, 2.5, 2.32, 2.32, 2.43, 2.47, 2.56, 2.65, 
+      2.47, 2.64, 2.56, 2.7, 2.72, 2.57))
+
+nlm <- nls(Y ~ alpha - beta * lambda^x, data=dat,
+           start=list(alpha=1, beta=1, lambda=0.9))
+summary(nlm)
+```
+
+```{r}
+stanmodel <- "
+data {
+  int<lower=0> N; 
+  real x[N]; 
+  real Y[N]; 
+} 
+parameters {
+  real alpha; 
+  real beta;  
+  real<lower=.5,upper= 1> lambda; // original gamma in the JAGS example  
+  real<lower=0> tau; 
+} 
+transformed parameters {
+  real sigma; 
+  real m[N];
+  for (i in 1:N) 
+    m[i] = alpha - beta * pow(lambda, x[i]);
+  sigma = 1 / sqrt(tau); 
+} 
+model {
+  // priors
+  alpha ~ normal(0.0, 1000); 
+  beta ~ normal(0.0, 1000); 
+  lambda ~ uniform(.5, 1); 
+  tau ~ gamma(.0001, .0001); 
+  // likelihood
+  Y ~ normal(m, sigma);   
+}
+generated quantities{
+  real Y_mean[N]; 
+  real Y_pred[N]; 
+  for(i in 1:N){
+    // Posterior parameter distribution of the mean
+    Y_mean[i] = alpha - beta * pow(lambda, x[i]);
+    // Posterior predictive distribution
+    Y_pred[i] = normal_rng(Y_mean[i], sigma);   
+}
+}
+"
+```
+
+```{r}
+
+
+```
