@@ -64,21 +64,27 @@ feature_subset <- harmony_collection$analytics_subset %>%
 
 feature_subset <- subset(feature_subset, complete.cases(feature_subset[,c('infocus_nucleus_hoechst_ser_dark_1px_mean_m', 'dose', 'individual')]))
 
-feature_subset$response <- scales::rescale(feature_subset$infocus_nucleus_hoechst_ser_dark_1px_mean_m, to = c(0.001, 0.999), from = range(feature_subset$infocus_nucleus_hoechst_ser_dark_1px_mean_m, na.rm = TRUE, finite = TRUE))
+# feature_subset$response <- as.integer(scales::rescale(feature_subset$infocus_nucleus_hoechst_ser_dark_1px_mean_m, to = c(1, 100), from = range(feature_subset$infocus_nucleus_hoechst_ser_dark_1px_mean_m, na.rm = TRUE, finite = TRUE)))
 
+feature_subset$response <- feature_subset$infocus_nucleus_hoechst_ser_dark_1px_mean_m
+  
 dat_harmony <- list(
   "y" = feature_subset$response,
   "x" = feature_subset$dose,
   "N" = nrow(feature_subset)
 ) 
 
-rescal
+
 ```
 
 
 ```{r}
 growth_model <- "
-
+  functions {
+    real LL4(real x, real b, real a, real d, real c) {
+      return c + (d - c) / (1 + exp(b * (log(x) - c)));
+    }
+  }
   data {
     int <lower=0> N;
     vector[N] x;
@@ -115,7 +121,6 @@ growth_model <- "
   }
   generated quantities {
     real Y_mean[N]; 
-    real Y_pred[N]; 
     for(i in 1:N){
       // Posterior parameter distribution of the mean
       Y_mean[i] = alpha - beta * pow(b, x[i]);
@@ -132,6 +137,9 @@ options(mc.cores = parallel::detectCores())
 fit <- stan(model_code = growth_model, 
             model_name = "GrowthCurve", 
             data = dat_harmony)
+
+pairs(fit, pars = c("b", "c", "d", "ehat"))
+
 
 # posterior
 Y_mean <- extract(fit, "Y_mean")
