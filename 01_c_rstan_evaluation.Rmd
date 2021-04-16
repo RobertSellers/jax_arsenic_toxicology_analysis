@@ -64,66 +64,63 @@ feature_subset <- harmony_collection$analytics_subset %>%
 
 feature_subset <- subset(feature_subset, complete.cases(feature_subset[,c('infocus_nucleus_hoechst_ser_dark_1px_mean_m', 'dose', 'individual')]))
 
+feature_subset$response <- scales::rescale(feature_subset$infocus_nucleus_hoechst_ser_dark_1px_mean_m, to = c(0.001, 0.999), from = range(feature_subset$infocus_nucleus_hoechst_ser_dark_1px_mean_m, na.rm = TRUE, finite = TRUE))
+
 dat_harmony <- list(
-  "response" = feature_subset$infocus_nucleus_hoechst_ser_dark_1px_mean_m,
-  "dose" = feature_subset$dose,
+  "y" = feature_subset$response,
+  "x" = feature_subset$dose,
   "N" = nrow(feature_subset)
 ) 
-```
 
-```{r}
-dat <- list(
-  "N" = 27,  
-  "dose" =
-    c(1, 1.5, 1.5, 1.5, 2.5, 4, 5, 5, 7, 8, 8.5, 9, 9.5, 9.5, 10, 
-      12, 12, 13, 13, 14.5, 15.5, 15.5, 16.5, 17, 22.5, 29, 31.5),
-  "response" =
-    c(1.8, 1.85, 1.87, 1.77, 2.02, 2.27, 2.15, 2.26, 2.47, 2.19, 
-      2.26, 2.4, 2.39, 2.41, 2.5, 2.32, 2.32, 2.43, 2.47, 2.56, 2.65, 
-      2.47, 2.64, 2.56, 2.7, 2.72, 2.57))
-
+rescal
 ```
 
 
 ```{r}
 growth_model <- "
-data {
-  int<lower=0> N; // number of observations
-  real dose[N]; // independent dose variable
-  real response[N]; // selected response variable
-} 
-parameters {
-  real alpha; 
-  real beta;  
-  real<lower=.5,upper= 1> lambda; // original gamma in the JAGS example  
+
+  data {
+    int <lower=0> N;
+    vector[N] x;
+    vector[N] y;
+  }
+  parameters {
+    real alpha; 
+    real beta;  
+    real <lower=0> a; //the minimum value that can be obtained 
+    real <upper=1> d; //the maximum value that can be obtained 
+    real <lower=0,upper=5> c; //the point of inflection 
+    real <lower=-1,upper=1> b; //Hill’s slope of the curve 
   real<lower=0> tau; 
-} 
-transformed parameters {
-  real sigma; 
-  real m[N];
-  for (i in 1:N) 
-    m[i] = alpha - beta * pow(lambda, dose[i]);
-  sigma = 1 / sqrt(tau); 
-} 
-model {
-  // priors
-  alpha ~ normal(0.0, 1000); 
-  beta ~ normal(0.0, 1000); 
-  lambda ~ uniform(.5, 1); 
-  tau ~ gamma(.0001, .0001); 
-  // likelihood
-  response ~ normal(m, sigma);   
-}
-generated quantities{
-  real Y_mean[N]; 
-  real Y_pred[N]; 
-  for(i in 1:N){
-    // Posterior parameter distribution of the mean
-    Y_mean[i] = alpha - beta * pow(lambda, dose[i]);
-    // Posterior predictive distribution
-    Y_pred[i] = normal_rng(Y_mean[i], sigma);   
-}
-}
+  }
+  transformed parameters {
+    real sigma; 
+    real m[N];
+    for (i in 1:N) 
+      m[i] = alpha - beta * pow(b, x[i]);
+    sigma = 1 / sqrt(tau); 
+  }
+  model {
+    a ~ normal(0,1);
+    d ~ normal(0,1);
+    c ~ normal(0,5);
+    b ~ uniform(-1,1);
+    // priors
+    alpha ~ normal(0.0, 1000); 
+    beta ~ normal(0.0, 1000); 
+    //lambda ~ uniform(.5, 1); 
+    tau ~ gamma(.0001, .0001); 
+    // likelihood
+    y ~ normal(m, sigma);   
+  }
+  generated quantities {
+    real Y_mean[N]; 
+    real Y_pred[N]; 
+    for(i in 1:N){
+      // Posterior parameter distribution of the mean
+      Y_mean[i] = alpha - beta * pow(b, x[i]);
+    }
+  }
 "
 ```
 
@@ -136,28 +133,21 @@ fit <- stan(model_code = growth_model,
             model_name = "GrowthCurve", 
             data = dat_harmony)
 
+# posterior
+Y_mean <- extract(fit, "Y_mean")
+
+Y_mean_mean <- apply(Y_mean$Y_mean, 2, mean)
+
+plot(dat_harmony$y ~ factor(dat_harmony$x), xlab="dose", ylab="response", ylim=c(0, 1), main="DRC tests RStan")
+
+lines(factor(dat_harmony$x), Y_mean_mean)
+#points(factor(dat_harmony$x), Y_pred_mean, pch=19)
 ```
 
 # Model extraction and plotting
 
 ```{r}
-Y_mean <- extract(fit, "Y_mean")
-Y_mean_cred <- apply(Y_mean$Y_mean, 2, quantile, c(0.05, 0.95))
-Y_mean_mean <- apply(Y_mean$Y_mean, 2, mean)
-
-Y_pred <- extract(fit, "Y_pred")
-Y_pred_cred <- apply(Y_pred$Y_pred, 2, quantile, c(0.05, 0.95))
-Y_pred_mean <- apply(Y_pred$Y_pred, 2, mean)
-plot(dat_harmony$response ~ dat_harmony$dose, xlab="dose", ylab="response", 
-     ylim=c(min(Y_mean_cred[1,],Y_mean_cred[2,],Y_pred_mean,dat_harmony$response), max(Y_mean_cred[1,],Y_mean_cred[2,],Y_pred_mean,dat_harmony$response)), main="Non-linear Growth Curve")
-lines(dat_harmony$dose, Y_mean_mean)
-points(dat_harmony$dose, Y_pred_mean, pch=19)
-lines(dat_harmony$dose, Y_mean_cred[1,], col=4)
-lines(dat_harmony$dose, Y_mean_cred[2,], col=4)
-lines(dat_harmony$dose, Y_pred_cred[1,], col=2)
-lines(dat_harmony$dose, Y_pred_cred[2,], col=2)
-# legend(x="bottomright", bty="n", lwd=2, lty=c(NA, NA, 1, 1,1),
-#        legend=c("observation", "prediction", "mean prediction",
-#                 "90% mean cred. interval", "90% pred. cred. interval"),
-#        col=c(1,1,1,4,2),  pch=c(1, 19, NA, NA, NA))
+color_scheme_set("red")
+bayesplot::ppc_dens_overlay(y = fit$y,
+                 yrep = posterior_predict(fit, draws = 50))
 ```
