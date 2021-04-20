@@ -202,7 +202,8 @@ standrm_robert <- function(formula, data, fct, curveid=NULL, random=NULL, priors
   options(mc.cores = parallel::detectCores())
   fit <- stan(model_code = stancode, 
               model_name = "test_arsenic",
-              data = stan_dat)
+              data = stan_dat,
+              chains = 3, iter = 5000, warmup = 500, thin = 10)
 
   out <- list()
   out$call <- callDetail
@@ -219,3 +220,107 @@ standrm_robert <- function(formula, data, fct, curveid=NULL, random=NULL, priors
   return(out)
 }
 
+
+robert_ED <- function(object, ..., respLev=NULL){ 
+  if (is.null(respLev)) stop("Please provide response levels!")
+  plist <- extract(object$stan, pars=object$pars)
+  fix <- object$fixed
+  fid <- logical(length=length(fix))
+  fid[is.na(fix)] <- object$curves$pars
+  samp <- lapply(1:object$curves$J, function(i){
+    sapply(1:length(fix), function(j){
+      if (fid[j]) plist[[j]][,i] else plist[[j]]
+    })
+  })
+  EDlist <- lapply(respLev, function(p){
+    smat <- cbind(sapply(1:length(samp), function(i){
+      apply(samp[[i]], 1, function(x){
+        xt <- x
+        xt[1] <- -exp(xt[1])
+        xt[5] <- exp(xt[5])
+        p <- 100-p
+        if (object$fct$name %in% c("LL.5", "LL.4", "LL.3")){
+          tempVal <- log((100 - p)/100)
+          value <- xt[4] * (exp(-tempVal/xt[5]) - 1)^(1/xt[1])
+        }
+        if (object$fct$name %in% c("L.5", "L.4", "L.3")){
+          tempVal <- 100/p
+          value <- xt[4] + (log(tempVal^(1/xt[5]) - 1))/xt[1]
+        }
+        if (object$fct$name %in% c("W1.4", "W1.3")){
+          tempVal <- log(-log((100 - p)/100))
+          value <- exp(tempVal/xt[1] + log(xt[4]))
+        }
+        if (object$fct$name %in% c("W2.4", "W2.3")){
+          p <- 100 - p
+          tempVal <- log(-log((100 - p)/100))
+          value <- exp(tempVal/xt[1] + log(xt[4]))
+        }
+        if (object$fct$name %in% c("LN.4", "LN.3")){
+          tempVal <- 1 - (100-p)/100
+          value <- exp(qnorm(tempVal)/xt[1]) * xt[4]
+        }
+        return(value)
+      })
+    }))
+    colnames(smat) <- object$curves$names
+    return(smat)
+  })
+  names(EDlist) <- respLev
+  class(EDlist) <- "EDsamp"
+  return(EDlist)  
+}
+
+print.EDsamp <- function(x, ...){
+  out <- lapply(x, function(xl){
+    dat <- as.data.frame(t(apply(cbind(xl), 2, function(xc) quantile(xc, c(0.5, 0.025, 0.975)))))
+    colnames(dat) <- c("median", "2.5%", "97.5%")
+    return(dat)
+  })
+  print(out)
+}
+
+plot_new <- function(x, ..., ndose=25, logx=FALSE, lim=NULL){
+
+    if (is.null(x$data$total)) xcc <- as.character(x$call$formula[[2]]) else xcc <- as.character("p")
+  if (x$curves$J > 1){
+    dframe <- data.frame(x$data$y, x$data$x, x$curves$names[x$data$idc])
+    names(dframe) <- c(xcc,
+                       as.character(x$call$formula[[3]]), 
+                       as.character(x$call$curveid[[3]]))
+  } else {
+    dframe <- data.frame(x$data$y, x$data$x)
+    names(dframe) <- c(xcc,
+                       as.character(x$call$formula[[3]]))
+  }
+  if (!is.null(x$data$total)) dframe[,1] <- dframe[,1]/x$data$total
+  
+  if (x$curves$J > 1){
+    curvn <- paste(",", as.character(x$call$curveid[[3]]), "=x$curves$names")
+    dframe[,3] <- factor(dframe[,3], levels=x$curves$names)
+  } else {
+    curvn=NULL
+  }
+  if (is.null(lim)){
+    minx <- min(x$data$x)
+    maxx <- max(x$data$x)
+  } else {
+    if (length(lim) != 2) stop("Please provide limits as vector with 2 elements.")
+    minx <- lim[1]
+    maxx <- lim[2]
+  }
+  if (logx){    
+    newd <- eval(parse(text=paste("expand.grid(", as.character(x$call$formula[[3]]), "=exp(seq(log(", minx, "), log(", maxx, "), length=ndose))", curvn, ")")))
+  } else {
+    newd <- eval(parse(text=paste("expand.grid(", as.character(x$call$formula[[3]]), "=seq(", minx, ", ", maxx, ", length=ndose)", curvn, ")")))    
+  }
+  pm <- predict(x, newdata=newd)
+  newd$p <- apply(pm, 2, function(x) mean(x, na.rm=TRUE))
+  # newd$pmin <- apply(pm, 2, function(x) quantile(x, 0.025, na.rm=TRUE))
+  # newd$pmax <- apply(pm, 2, function(x) quantile(x, 0.975, na.rm=TRUE))
+  
+  if (logx) lxt <- "+ coord_trans(x='log')" else lxt <- NULL
+
+  eval(parse(text=paste("ggplot(dframe, aes(x=",  as.character(x$call$formula[[3]]),", y=", xcc, ", colour=", as.character(x$call$curveid[[3]]),")) +  geom_point() + geom_line(data=newd, aes(y=p))", lxt)) ) 
+
+}
