@@ -1,59 +1,57 @@
-standrm_robert <- function(formula, data, fct, curveid=NULL, random=NULL, priors=standrc_priors(), ...){
+standrm_harmony <- function(formula, data, fct, curveid=NULL, random=NULL, priors=standrc_priors(), ...){
 
   callDetail <- match.call()
   
   mf <- model.frame(formula, data)
   
-  if (!is.null(curveid)){
-    cid <- as.character(curveid)[3]
-    idc <- as.numeric(data$individual_id)
-    J <- length(unique(idc))
-    stsp <- strsplit(as.character(curveid)[2], "+")[[1]]
-    cin <- stsp[!stsp %in% c(" ", "+")]
-    pnl <- sapply(fct$names, function(x) x %in% cin)
-    curvenames <- levels(as.factor(data$individual_id))
-  } else {
-    cid <- idc <- NULL
-    J <- 1
-    pnl <- rep(FALSE, length(fct$names))
-    curvenames <- NULL
-  }
-  
-  if (!is.null(random)){
-    rid <- as.character(random)[3]
-    idr <- as.numeric(data$dir_id)
-    K <- length(unique(idr))
-    stsp <- strsplit(as.character(random)[2], "+")[[1]]
-    rin <- stsp[!stsp %in% c(" ", "+")]
-    pnlr <- sapply(c("b", "c", "d", "e", "f"), function(x) x %in% rin)
-  } else {
-    rid <- idr <- NULL
-    K <- 1
-    pnlr <- rep(FALSE, 5)
-  }
+  cid <- as.character(curveid)[3]
+  idc <- as.numeric(data$individual_id)
+  J <- length(unique(idc))
+  stsp <- strsplit(as.character(curveid)[2], "+")[[1]]
+  cin <- stsp[!stsp %in% c(" ", "+")]
+  pnl <- sapply(fct$names, function(x) x %in% cin)
+  curvenames <- levels(as.factor(data$individual_id))
+
+  rid <- as.character(random)[3]
+  idr <- as.numeric(data$dir_id)
+  K <- length(unique(idr))
+  stsp <- strsplit(as.character(random)[2], "+")[[1]]
+  rin <- stsp[!stsp %in% c(" ", "+")]
+  pnlr <- sapply(c("b", "c", "d", "e", "f"), function(x) x %in% rin)
   
   fix <- fct$fixed
   if (fct$name %in% c("W1.4", "W1.3", "W2.4", "W2.3", "LN.4", "LN.3") | attr(fct, "class") == "fp-logistic") fix <- c(fix, 0)  
   isfix <- !is.na(fix)
   
+  # what's going on here
   jv <- rep(J, 5)
   jv[!isfix][!pnl] <- 1
   
   N <- nrow(mf) 
   y <- mf[,1]
   x <- mf[,2]   
-  if (fct$name %in% c("LL.5", "LL.4", "LL.3", "W1.4", "W1.3", "W2.4", "W2.3", "LN.4", "LN.3", "MM.2", "MM.3") | attr(fct, "class") == "fp-logistic") x[x == 0] <- 0.5*min(x[x > 0])
-  if (fct$name %in% c("LL.4", "LL.3", "L.4", "L.3", "MM.2", "MM.3") | attr(fct, "class") == "fp-logistic") fix[5] <- 0
-  if (fct$name %in% c("MM.2", "MM.3")){
-    fix[1] <- 0
-    fct$name <- "LL.5"
+
+  if (fct$name %in% c("LL.5", "LL.4", "LL.3", "W1.4", "W1.3", "W2.4", "W2.3", "LN.4", "LN.3", "MM.2", "MM.3") | attr(fct, "class") == "fp-logistic"){
+    # set no dose to half lowest dose
+    x[x == 0] <- 0.5*min(x[x > 0])
+  }
+  if (fct$name %in% c("LL.4", "LL.3", "L.4", "L.3", "MM.2", "MM.3") | attr(fct, "class") == "fp-logistic"){
+    fix[5] <- 0
   } 
+
   if (attr(fct, "class") == "fp-logistic"){
+    # not LL.4
     p1 <- get("p1", environment(fct$fct))
     p2 <- get("p2", environment(fct$fct))    
   }
-  
-  if (is.null(priors$pb)) pb <- rep(0, jv[1]) else pb <- priors$pb
+  browser()
+  # read priors from input
+  if (is.null(priors$pb)){
+    # read in distribution from metadrm?
+    pb <- rep(0, jv[1])
+  }else{
+    pb <- priors$pb
+  }
   if (mean(y[x == min(x)]) < mean(y[x == max(x)])){
     if (is.null(priors$pc)) pc <- rep(min(y), jv[2]) else pc <- priors$pc
     if (is.null(priors$pd)) pd <- rep(max(y), jv[3]) else pd <- priors$pd
@@ -197,13 +195,18 @@ standrm_robert <- function(formula, data, fct, curveid=NULL, random=NULL, priors
                     ppc,                                     
                     "}",
                     sep="")
-
+  cat(stancode)
   rstan_options(auto_write = TRUE)
   options(mc.cores = parallel::detectCores())
   fit <- stan(model_code = stancode, 
               model_name = "test_arsenic",
               data = stan_dat,
-              chains = 3, iter = 5000, warmup = 500, thin = 10)
+              chains = 3, 
+              iter = 5000, 
+              init = "random",
+              # verbose = TRUE,
+              #warmup = 500, 
+              thin = 1)
 
   out <- list()
   out$call <- callDetail
