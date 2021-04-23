@@ -7,8 +7,13 @@ options(scipen = 999)
 setwd("/Users/seller/Desktop/projects/jax_arsenic_toxicology_analysis")
 harmony_collection <- readRDS("temp_files/do_focus_merge_2_forstan.RData")
 
-try({rm(standrm_robert);rm(plot_new)})
+try({rm(standrm_harmony);rm(plot_new)})
 source('scripts/standrc_evals.R')
+source('scripts/custom_tools.R')
+
+group.center <- function(var,grp) {
+  return(var-tapply(var,grp,mean,na.rm=T)[grp])
+}
 
 feature_subset <- harmony_collection$analytics_subset %>%
   group_by(dir) %>%
@@ -19,7 +24,9 @@ feature_subset <- harmony_collection$analytics_subset %>%
 prepare_data_for_stan <- function(ft, dat, log_ = FALSE, scale_ = TRUE){
   dat$response <- as.numeric(unlist(dat[,c(ft)]))
   dat <- dat[!is.na(dat$response), ] 
-  if (log_) dat$response <- log(dat$response)
+  if (log_) {
+      dat$response <- log(dat$response)
+  }
   if (scale_){
     dat$response <- scales::rescale(dat$response, 
                                     to = c(0.01,100), 
@@ -30,20 +37,30 @@ prepare_data_for_stan <- function(ft, dat, log_ = FALSE, scale_ = TRUE){
   return(dat)
 }
 
+
 ###### 1 ######
 # https://github.com/daniel-gerhard/standrc/blob/master/vignettes/standrc_vignette.Rmd
 feature_subset_intensity <- prepare_data_for_stan('infocus_intensity_cell_hoechst_mean_mean',
                                         feature_subset, 
-                                        log_ = TRUE)
+                                        log_ = FALSE)
+
 
 spm_intensity <- standrm_harmony(formula=response ~ dose, data=feature_subset_intensity, 
-                      fct = LL.4(fixed=c(NA, 0, 100, NA)), # slope, lower limit, upper limit, ed50
-                      curveid = b + e ~ individual_id,
-                      #weights = varExp(form=multi_nucleated_cells_numberofobjects),
-                      random = b + c ~ dir_id) # can only do a single effect?
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            standrc_priors(e="normal(pe, 5)", 
+                                           b="normal(pb, 1)"), 
+                            random=b + c + d  ~ dir_id,
+                            iter = 2000
+                            # cores = 8,
+                            # chains = 8
+                            #iter = 3000
+                            )
 
+png(file="./output/stan_tests/spm_intensity_10.png",
+    width=600, height=350)
 plot_new(spm_intensity, ndose=25, logx=TRUE, legend = FALSE) + theme(legend.position = "none")
-
+dev.off()
 
 ED(spm_intensity, respLev=c(50))
 # print(spm_intensity) 
@@ -57,34 +74,50 @@ ED(spm_intensity, respLev=c(50))
 ###### 2 ######
 # infocus_nucleus_hoechst_ser_dark_1px_mean_m
 # rescale is enough
-
-feature_subset_dark <- prepare_data_for_stan('infocus_nucleus_hoechst_ser_dark_1px_mean_m',
+feature_subset_dark <- prepare_data_for_stan('infocus_nucleus_hoechst_ser_dark_1px_mean',
                                                   feature_subset, 
                                                   log_ = FALSE)
 
 spm_dark <- standrm_harmony(formula=response ~ dose, data=feature_subset_dark, 
-                                fct = LL.4(fixed=c(NA, NA, NA, NA)), # slope, lower limit, upper limit, ed50
-                                # curveid= b ~ individual,
-                                curveid= b + e ~ individual_id,
-                                # random=c + d + e ~ dir/dose)
-                           # priors=standrc_priors(f="normal(pf, 2)", pf=0,
-                           #                       c="normal(pc, 1)", pc=10,
-                           #                       d="normal(pd, 1)", pd=0),
-                                random=b + c + d  ~ 1 | dir_id)
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            standrc_priors(e="normal(pe, 5)", 
+                                           b="normal(pb, 1)"), 
+                            random=b + c + d  ~ dir_id,
+                            iter = 2000
+                            # cores = 8,
+                            # chains = 8
+                            #iter = 3000
+)
 
+png(file="./output/stan_tests/spm_dark_1.png",
+    width=600, height=350)
 plot_new(spm_dark, ndose=25, logx=TRUE, legend = FALSE) + theme(legend.position = "none")
+dev.off()
 
+ED(spm_dark, respLev=c(50))
 ###### 3 ######
 # infocus_nucleus_hoechst_ser_edge_1px_mean_m
 # rescale is enough
 
-feature_subset_edge <- prepare_data_for_stan('infocus_nucleus_hoechst_ser_edge_1px_mean_m',
+feature_subset_edge <- prepare_data_for_stan('infocus_nucleus_hoechst_ser_edge_1px_mean',
                                                   feature_subset, 
                                                   log_ = FALSE)
 
 spm_edge <- standrm_harmony(formula=response ~ dose, data = feature_subset_edge, 
-                                fct = LL.4(fixed=c(NA, NA, NA, NA)), # slope, lower limit, upper limit, ed50
-                                curveid= b + e ~ individual_id,
-                                random=b + c + d ~ dir_id)
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            standrc_priors(e="normal(pe, 5)", 
+                                           b="normal(pb, 1)"), 
+                            random=b + c + d  ~ dir_id,
+                            iter = 2000
+                            # cores = 8,
+                            # chains = 8
+                            #iter = 3000
+)
 
+png(file="./output/stan_tests/spm_edge_1.png",
+    width=600, height=350)
 plot_new(spm_edge, ndose=25, logx=TRUE, legend = FALSE) + theme(legend.position = "none")
+dev.off()
+ED(spm_edge, respLev=c(50))

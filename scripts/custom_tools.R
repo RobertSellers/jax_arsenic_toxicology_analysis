@@ -222,3 +222,7 @@ boxplot_pairs <- function(filename, y, data){
   print(fr)
   dev.off()
 }
+
+group.center <- function(var,grp) {
+  return(var-tapply(var,grp,mean,na.rm=T)[grp])
+}
