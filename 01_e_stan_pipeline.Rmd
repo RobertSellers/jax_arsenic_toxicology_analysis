@@ -194,14 +194,93 @@ ed50s_df_hoescht$mean_row <- rowMeans(ed50s_df_hoescht[ ,-1])
 ed50s_df_mito$mean_row <- rowMeans(ed50s_df_mito[ ,-1])
 hist(ed50s_df_hoescht$mean_row)
 hist(ed50s_df_mito$mean_row)
-sensitive_hoescht <- ed50s_df_hoescht %>% slice_min(mean_row, n = 3) 
-resilient_hoescht <- ed50s_df_hoescht %>% slice_max(mean_row, n = 3) 
-sensitive_mito <- ed50s_df_mito %>% slice_min(mean_row, n = 3) 
-resilient_mito <- ed50s_df_mito %>% slice_max(mean_row, n = 3) 
+sensitive_hoescht <- ed50s_df_hoescht %>% slice_min(mean_row, n = 1) 
+resilient_hoescht <- ed50s_df_hoescht %>% slice_max(mean_row, n = 1) 
+sensitive_mito <- ed50s_df_mito %>% slice_min(mean_row, n = 1) 
+resilient_mito <- ed50s_df_mito %>% slice_max(mean_row, n = 1) 
 ```
 
 
 
 ```{r}
+pm_hoescht_multinucleatedobjects <- predict_harmony(spm_hoescht_multinucleatedobjects, newdata = data.frame("individual_id" = unique(feature_subset$individual_id), "dose" = ed50s_df_hoescht$hoescht_multinucleatedobjects))
+pm_hoescht_intensity <- predict_harmony(spm_hoescht_intensity, newdata = data.frame("individual_id" = unique(feature_subset$individual_id), "dose" = ed50s_df_hoescht$hoescht_intensity))
+pm_hoescht_edge <- predict_harmony(spm_hoescht_edge, newdata = data.frame("individual_id" = unique(feature_subset$individual_id), "dose" = ed50s_df_hoescht$hoescht_edge))
+pm_hoescht_dark <- predict_harmony(spm_hoescht_dark, newdata = data.frame("individual_id" = unique(feature_subset$individual_id), "dose" = ed50s_df_hoescht$hoescht_dark))
+pm_mito_intensity <- predict_harmony(spm_mito_intensity, newdata = data.frame("individual_id" = unique(feature_subset$individual_id), "dose" = ed50s_df_mito$mito_intensity))
+pm_mito_nucleinumberofobjects <- predict_harmony(spm_mito_nucleinumberofobjects, newdata = data.frame("individual_id" = unique(feature_subset$individual_id), "dose" = ed50s_df_mito$mito_nucleinumberofobjects))
+pm_mito_edge <- predict_harmony(spm_mito_edge, newdata = data.frame("individual_id" = unique(feature_subset$individual_id), "dose" = ed50s_df_mito$mito_edge))
+pm_mito_area <- predict_harmony(spm_mito_area, newdata = data.frame("individual_id" = unique(feature_subset$individual_id), "dose" = ed50s_df_mito$mito_area))
 
+predictions <- data.frame("individual" = unique(feature_subset$individual))
+predictions$hoescht_multinucleatedobjects <- apply(pm_hoescht_multinucleatedobjects, 2, function(x) mean(x, na.rm=TRUE))
+predictions$hoescht_intensity <- apply(pm_hoescht_intensity, 2, function(x) mean(x, na.rm=TRUE))
+predictions$hoescht_edge <- apply(pm_hoescht_edge, 2, function(x) mean(x, na.rm=TRUE))
+predictions$hoescht_dark <- apply(pm_hoescht_dark, 2, function(x) mean(x, na.rm=TRUE))
+predictions$mito_intensity <- apply(pm_mito_intensity, 2, function(x) mean(x, na.rm=TRUE))
+predictions$mito_nucleinumberofobjects <- apply(pm_mito_nucleinumberofobjects, 2, function(x) mean(x, na.rm=TRUE))
+predictions$mito_edge <- apply(pm_mito_edge, 2, function(x) mean(x, na.rm=TRUE))
+predictions$mito_area <- apply(pm_mito_area, 2, function(x) mean(x, na.rm=TRUE))
+```
+
+- rbind all predictions, ed50s, and groups
+
+```{r}
+pred_long <- predictions %>% 
+    tidyr::gather(feature, value, -individual)
+
+pred_mito_ed_long <- ed50s_df_mito %>% 
+    dplyr::select(-last_col()) %>%
+    tidyr::gather(feature, value, -individual)
+
+pred_hoescht_ed_long <- ed50s_df_hoescht %>% 
+    dplyr::select(-last_col()) %>%
+    tidyr::gather(feature, value, -individual)
+
+pred_ed_long_all <- rbind(pred_mito_ed_long,pred_hoescht_ed_long)
+# ed_w_pred_df <- cbind(pred_long,pred_ed_long_all)
+pred_ed_long_all_join <- pred_ed_long_all %>% right_join(pred_long, by=c("individual","feature"))
+colnames(pred_ed_long_all_join) <- c("individual","feature","ed50_dose", "pred_response")
+```
+
+```{r}
+# plot groups
+# intensity_sub 
+# count_sub 
+# edge_sub 
+
+# sensitive_hoescht <- ed50s_df_hoescht %>% slice_min(mean_row, n = 3) 
+# resilient_hoescht <- ed50s_df_hoescht %>% slice_max(mean_row, n = 3) 
+# sensitive_mito <- ed50s_df_mito %>% slice_min(mean_row, n = 3) 
+# resilient_mito <- ed50s_df_mito %>% slice_max(mean_row, n = 3) 
+
+sensitive_features <- subset(pred_ed_long_all_join, individual %in% c(sensitive_hoescht$individual, sensitive_mito$individual))
+
+resilient_features <- subset(pred_ed_long_all_join, individual %in% c( resilient_hoescht$individual, resilient_mito$individual))
+```
+
+```{r}
+ggplot(pred_ed_long_all_join) +
+   geom_point(mapping = aes(x = ed50_dose, y = pred_response, 
+                          color = feature), size = 0.5) + 
+  # geom_text(data = sensitive_features, aes(x = ed50_dose, y = pred_response, label = individual), size = 2, color = 'blue') +
+  # geom_text(data = resilient_features, aes(x = ed50_dose, y = pred_response, label = individual), size = 2, color = 'darkred') +
+  geom_line(data = sensitive_features,aes(x = ed50_dose, y = pred_response, group = individual), color = 'blue') +
+  geom_line(data = resilient_features,aes(x = ed50_dose, y = pred_response, group = individual), color = 'darkred') +
+    ggrepel::geom_text_repel(aes(x=ed50_dose, y=pred_response,label = individual),
+                             data = resilient_features,
+                 nudge_x = 2,
+                 color = 'darkred',
+               bg.color = "white",
+                  bg.r = 0.25,
+               force = 2,
+               size = 2) +
+    ggrepel::geom_text_repel(aes(x=ed50_dose, y=pred_response,label = individual),
+                             data = sensitive_features,
+                 #nudge_x = 2,
+                 force = 2,
+               bg.color = "white",
+               color = "darkblue",
+                  bg.r = 0.25,
+               size = 2)
 ```
