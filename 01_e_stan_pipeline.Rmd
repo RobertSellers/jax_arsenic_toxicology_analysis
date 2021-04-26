@@ -31,11 +31,14 @@ output:
 
 ```{r message=FALSE}
 options(scipen = 999)
-library(rstan)
 library(dplyr)
 library(ggplot2)
+library(standrc)
+library(robustbase)
+library(scales)
 source('scripts/standrc_evals.R') # standrc code that actually works
 source('scripts/custom_tools.R')
+source("scripts/harmony_utils.R")
 ```
 
 # Data setup
@@ -52,17 +55,153 @@ feature_subset <- harmony_collection$analytics_subset %>%
   mutate(individual_id = cur_group_id())
 ```
 
-1. Select 12 variables
-  - 4 / 4 / 4
-  - 3 / 3 / 3 / 3 
+1. Isolate "useful" features
+
+a. remove high missing rates
+
+```{r}
+# nothing right now
+# need to change harmony object loading system to update single object based on directory
+```
+
+2. Select 8 variables
+  - 4 hoescht / 4 mitotracker currently
   
-  
-  
-2. Run Stan model on each
+```{r}
+# multi_nucleated_cells_numberofobjects, infocus_intensity_cell_hoechst_mean_mean, infocus_nucleus_hoechst_ser_edge_1px_mean, infocus_nucleus_hoechst_ser_dark_1px_mean
+# infocus_intensity_cell_mitotrackerdeepred_mean_mean, nuclei_numberofobjects, infocus_cell_mitotrackerdeepred_ser_edge_1px_mean, infocus_cell_area_mm2_mean
+
+```
+
+# Modeling
+
+3. Run Stan model on each
   - extract ed50 and respective predictions per value
   - generate scatterplot (x/y) and highlight high variance
 
-3. Extract
-  - remove outlier ed50s
-  - 2 high mice and 2 low mice per feature (4x12)
+## Subsets
+
+```{r}
+stan_df_hoescht_multinucleatedobjects <- prepare_data_for_stan('multi_nucleated_cells_numberofobjects',
+                                        feature_subset, 
+                                        log_ = FALSE)
+stan_df_hoescht_intensity <- prepare_data_for_stan('infocus_intensity_cell_hoechst_mean_mean',
+                                        feature_subset, 
+                                        log_ = FALSE)
+stan_prep_hoescht_edge <- prepare_data_for_stan('infocus_nucleus_hoechst_ser_edge_1px_mean',
+                                        feature_subset, 
+                                        log_ = FALSE)
+stan_prep_hoescht_dark <- prepare_data_for_stan('infocus_nucleus_hoechst_ser_dark_1px_mean',
+                                        feature_subset, 
+                                        log_ = FALSE)
+stan_prep_mito_intensity <- prepare_data_for_stan('infocus_intensity_cell_mitotrackerdeepred_mean_mean',
+                                        feature_subset, 
+                                        log_ = FALSE)
+stan_prep_mito_nucleinumberofobjects <- prepare_data_for_stan('nuclei_numberofobjects',
+                                        feature_subset, 
+                                        log_ = FALSE)
+stan_prep_mito_edge <- prepare_data_for_stan('infocus_cell_mitotrackerdeepred_ser_edge_1px_mean',
+                                        feature_subset, 
+                                        log_ = FALSE)
+stan_prep_mito_area <- prepare_data_for_stan('infocus_cell_area_mm2_mean',
+                                        feature_subset, 
+                                        log_ = FALSE)
+```
+
+## Stan code
+
+```{r}
+spm_hoescht_multinucleatedobjects <- standrm_harmony(formula=response ~ dose, data = stan_df_hoescht_multinucleatedobjects, 
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            random=b + c + d  ~ dir_id
+                            )
+spm_hoescht_intensity<- standrm_harmony(formula=response ~ dose, data=stan_df_hoescht_intensity, 
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            random=b + c + d  ~ dir_id
+                            )
+spm_hoescht_edge <- standrm_harmony(formula=response ~ dose, data=stan_prep_hoescht_edge, 
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            random=b + c + d  ~ dir_id
+                            )
+spm_hoescht_dark <- standrm_harmony(formula=response ~ dose, data=stan_prep_hoescht_dark, 
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            random=b + c + d  ~ dir_id
+                            )
+spm_mito_intensity <- standrm_harmony(formula=response ~ dose, data=stan_prep_mito_intensity, 
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            random=b + c + d  ~ dir_id
+                            )
+spm_mito_nucleinumberofobjects <- standrm_harmony(formula=response ~ dose, data=stan_prep_mito_nucleinumberofobjects, 
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            random=b + c + d  ~ dir_id
+                            )
+spm_mito_edge <- standrm_harmony(formula=response ~ dose, data=stan_prep_mito_edge, 
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            random=b + c + d  ~ dir_id
+                            )
+spm_mito_area <- standrm_harmony(formula=response ~ dose, data=stan_prep_mito_area, 
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            random=b + c + d  ~ dir_id
+                            )
+```
+
+4. Extract
+  - remove outlier ed50s?
+  - rescaling inappropriate?
+  - selecting based on general sensitivity and/or resilience
   
+```{r}
+ed50_hoescht_multinucleatedobjects <- ED(spm_hoescht_multinucleatedobjects, respLev=c(50))
+ed50_hoescht_intensity <- ED(spm_hoescht_intensity, respLev=c(50))
+ed50_hoescht_edge <- ED(spm_hoescht_edge, respLev=c(50))
+ed50_hoescht_dark <- ED(spm_hoescht_dark, respLev=c(50))
+ed50_mito_intensity <- ED(spm_mito_intensity, respLev=c(50))
+ed50_mito_nucleinumberofobjects <- ED(spm_mito_nucleinumberofobjects, respLev=c(50))
+ed50_mito_edge <- ED(spm_mito_edge, respLev=c(50))
+ed50_mito_area <- ED(spm_mito_area, respLev=c(50))
+ed50s_df_hoescht <- data.frame(
+  "individual" = unique(feature_subset$individual), # confirm this is correct order
+  "hoescht_multinucleatedobjects" = colMedians(ed50_hoescht_multinucleatedobjects$`50`),
+  "hoescht_intensity" = colMedians(ed50_hoescht_intensity$`50`),
+  "hoescht_edge" = colMedians(ed50_hoescht_edge$`50`),
+  "hoescht_dark" = colMedians(ed50_hoescht_dark$`50`)
+  )
+
+ed50s_df_mito <- data.frame(
+  "individual" = unique(feature_subset$individual), # confirm this is correct order
+  "mito_intensity" = colMedians(ed50_mito_intensity$`50`),
+  "mito_nucleinumberofobjects" = colMedians(ed50_mito_nucleinumberofobjects$`50`),
+  "mito_edge" = colMedians(ed50_mito_edge$`50`),
+  "mito_area" = colMedians(ed50_mito_area$`50`)
+)
+ed50s_df_hoescht$mean_row <- rowMeans(ed50s_df_hoescht[ ,-1])
+ed50s_df_mito$mean_row <- rowMeans(ed50s_df_mito[ ,-1])
+hist(ed50s_df_hoescht$mean_row)
+hist(ed50s_df_mito$mean_row)
+sensitive_hoescht <- ed50s_df_hoescht %>% slice_min(mean_row, n = 3) 
+resilient_hoescht <- ed50s_df_hoescht %>% slice_max(mean_row, n = 3) 
+sensitive_mito <- ed50s_df_mito %>% slice_min(mean_row, n = 3) 
+resilient_mito <- ed50s_df_mito %>% slice_max(mean_row, n = 3) 
+```
+
+
+
+```{r}
+
+```
