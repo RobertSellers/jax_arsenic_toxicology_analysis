@@ -1,0 +1,68 @@
+---
+title: "DO #1a LMER custom test"
+author:
+- name: Robert Sellers
+  affiliation: The Jackson Laboratory
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
+abstract: |
+latex_engine: pdflatex
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    number_sections: true
+    theme: lumen
+    toc: yes
+    toc_float: yes
+    df_print: paged
+    # code_folding: "hide"
+  pdf_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pyments
+    keep_tex: yes
+    latex_engine: xelatex
+    number_sections: no
+    toc: no
+    
+---
+
+# Programming environment
+
+```{r message=FALSE}
+options(scipen = 999)
+library(rstan)
+library(dplyr)
+library(ggplot2)
+source('scripts/standrc_evals.R') # standrc code that actually works
+source('scripts/custom_tools.R')
+```
+
+# Data setup
+
+- groups / effects are coerced as integers to appease standrc code
+
+```{r}
+setwd("/Users/seller/Desktop/projects/jax_arsenic_toxicology_analysis")
+harmony_collection <- readRDS("temp_files/do_focus_merge_2_forstan.RData")
+feature_subset <- harmony_collection$analytics_subset %>%
+  group_by(dir) %>%
+  mutate(dir_id = cur_group_id()) %>%
+  group_by(individual) %>%
+  mutate(individual_id = cur_group_id())
+```
+
+1. Select 12 variables
+  - 4 / 4 / 4
+  - 3 / 3 / 3 / 3 
+  
+  
+  
+2. Run Stan model on each
+  - extract ed50 and respective predictions per value
+  - generate scatterplot (x/y) and highlight high variance
+
+3. Extract
+  - remove outlier ed50s
+  - 2 high mice and 2 low mice per feature (4x12)
+  
