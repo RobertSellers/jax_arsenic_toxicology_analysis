@@ -323,3 +323,36 @@ plot_new <- function(x, ..., ndose=25, logx=FALSE, lim=NULL){
   eval(parse(text=paste("ggplot(dframe, aes(x=",  as.character(x$call$formula[[3]]),", y=", xcc, ", colour=", as.character(x$call$curveid[[3]]),")) +  geom_point() + geom_line(data=newd, aes(y=p))", lxt)) ) 
 
 }
+
+predict_harmony <- function(object, ..., newdata=NULL){ 
+  if (is.null(newdata)) x <- object$data$x else x <- newdata[,as.character(object$call$formula[3])]
+  if (is.null(newdata)){
+    if (is.null(object$data$idc)) idc <- rep(1, length(x)) else idc <- object$data$idc
+  } else {
+    if (is.null(object$data$idc)) idc <- rep(1, nrow(newdata)) else idc <- newdata[,as.character(object$call$curveid)[3]]
+  }  
+  plist <- extract(object$stan, pars=object$pars)
+  fix <- object$fixed
+  fid <- logical(length=length(fix))
+  fid[is.na(fix)] <- object$curves$pars
+  samp <- lapply(1:object$curves$J, function(i){
+    sapply(1:length(fix), function(j){
+      if (fid[j]) plist[[j]][,i] else plist[[j]]
+    })
+  })
+  if (attr(object$fct, "class") == "fp-logistic"){
+    p1 <- get("p1", environment(object$fct$fct))
+    p2 <- get("p2", environment(object$fct$fct))    
+  }  
+  pred <- sapply(1:length(x), function(i){
+    apply(samp[[as.numeric(idc)[i]]], 1, function(xp){
+      if (object$fct$name %in% c("LL.5", "LL.4", "LL.3")) return(xp[2] + (xp[3] - xp[2]) / (1 + exp(-exp(xp[1]) * (log(x[i]/ xp[4]))))^exp(xp[5]))
+      if (object$fct$name %in% c("L.5", "L.4", "L.3")) return(xp[2] + (xp[3] - xp[2]) / (1 + exp(-exp(xp[1]) * (x[i] - xp[4])))^exp(xp[5]))
+      if (object$fct$name %in% c("W1.4", "W1.3")) return(xp[2] + (xp[3] - xp[2]) * exp(-exp(-exp(xp[1]) * (log(x[i]) - log(xp[4])))))
+      if (object$fct$name %in% c("W2.4", "W2.3")) return(xp[2] + (xp[3] - xp[2]) * (1 - exp(-exp(-exp(xp[1]) * (log(x[i]) - log(xp[4]))))))
+      if (object$fct$name %in% c("LN.4", "LN.3")) return(xp[2] + (xp[3] - xp[2]) * pnorm(exp(xp[1]) * (log(x[i]) - log(xp[4]))))
+      if (attr(object$fct, "class") == "fp-logistic") return(xp[2] + (xp[3] - xp[2]) / (1 + exp(-exp(xp[1]) * log(x[i] + 1)^p1 + xp[4] * log(x[i] + 1)^p2)))
+    })
+  })
+  return(pred)
+}
