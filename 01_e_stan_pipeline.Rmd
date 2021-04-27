@@ -1,5 +1,5 @@
 ---
-title: "DO #1a LMER custom test"
+title: "DO #1e STAN custom test"
 author:
 - name: Robert Sellers
   affiliation: The Jackson Laboratory
@@ -70,7 +70,23 @@ a. remove high missing rates
 ```{r}
 # multi_nucleated_cells_numberofobjects, infocus_intensity_cell_hoechst_mean_mean, infocus_nucleus_hoechst_ser_edge_1px_mean, infocus_nucleus_hoechst_ser_dark_1px_mean
 # infocus_intensity_cell_mitotrackerdeepred_mean_mean, nuclei_numberofobjects, infocus_cell_mitotrackerdeepred_ser_edge_1px_mean, infocus_cell_area_mm2_mean
-
+prepare_data_for_stan_test <- function(ft, dat, log_ = FALSE, scale_ = TRUE){
+  dat$response <- as.numeric(unlist(dat[,c(ft)]))
+  dat <- dat[!is.na(dat$response), ] 
+  if (log_) {
+      dat$response <- log(dat$response)
+  }
+  if (scale_){
+    dat[is.na(dat) | dat == Inf | dat == -Inf] <- NA 
+    dat <- dat[!is.na(dat$response), ] 
+    dat$response <- scales::rescale(dat$response, 
+                                    to = c(0.01,100), 
+                                    from = range(dat$response), 
+                                    na.rm = TRUE, 
+                                    finite = TRUE)
+  }
+  return(dat)
+}
 ```
 
 # Modeling
@@ -84,7 +100,7 @@ a. remove high missing rates
 ```{r}
 stan_df_hoescht_multinucleatedobjects <- prepare_data_for_stan('multi_nucleated_cells_numberofobjects',
                                         feature_subset, 
-                                        log_ = FALSE)
+                                        log_ = TRUE)
 stan_df_hoescht_intensity <- prepare_data_for_stan('infocus_intensity_cell_hoechst_mean_mean',
                                         feature_subset, 
                                         log_ = FALSE)
@@ -99,7 +115,7 @@ stan_prep_mito_intensity <- prepare_data_for_stan('infocus_intensity_cell_mitotr
                                         log_ = FALSE)
 stan_prep_mito_nucleinumberofobjects <- prepare_data_for_stan('nuclei_numberofobjects',
                                         feature_subset, 
-                                        log_ = FALSE)
+                                        log_ = TRUE)
 stan_prep_mito_edge <- prepare_data_for_stan('infocus_cell_mitotrackerdeepred_ser_edge_1px_mean',
                                         feature_subset, 
                                         log_ = FALSE)
@@ -114,49 +130,49 @@ stan_prep_mito_area <- prepare_data_for_stan('infocus_cell_area_mm2_mean',
 spm_hoescht_multinucleatedobjects <- standrm_harmony(formula=response ~ dose, data = stan_df_hoescht_multinucleatedobjects, 
                             fct = LL.4(), # slope, lower limit, upper limit, ed50
                             curveid= b + e ~ individual_id,
-                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            standrc_priors(e="normal(pe, 2)", b="normal(pb, 1)"), 
                             random=b + c + d  ~ dir_id
                             )
 spm_hoescht_intensity<- standrm_harmony(formula=response ~ dose, data=stan_df_hoescht_intensity, 
                             fct = LL.4(), # slope, lower limit, upper limit, ed50
                             curveid= b + e ~ individual_id,
-                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            standrc_priors(e="normal(pe, 2)", b="normal(pb, 1)"), 
                             random=b + c + d  ~ dir_id
                             )
 spm_hoescht_edge <- standrm_harmony(formula=response ~ dose, data=stan_prep_hoescht_edge, 
                             fct = LL.4(), # slope, lower limit, upper limit, ed50
                             curveid= b + e ~ individual_id,
-                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            standrc_priors(e="normal(pe, 2)", b="normal(pb, 1)"), 
                             random=b + c + d  ~ dir_id
                             )
 spm_hoescht_dark <- standrm_harmony(formula=response ~ dose, data=stan_prep_hoescht_dark, 
                             fct = LL.4(), # slope, lower limit, upper limit, ed50
                             curveid= b + e ~ individual_id,
-                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            standrc_priors(e="normal(pe, 2)", b="normal(pb, 1)"), 
                             random=b + c + d  ~ dir_id
                             )
 spm_mito_intensity <- standrm_harmony(formula=response ~ dose, data=stan_prep_mito_intensity, 
                             fct = LL.4(), # slope, lower limit, upper limit, ed50
                             curveid= b + e ~ individual_id,
-                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            standrc_priors(e="normal(pe, 2)", b="normal(pb, 1)"), 
                             random=b + c + d  ~ dir_id
                             )
 spm_mito_nucleinumberofobjects <- standrm_harmony(formula=response ~ dose, data=stan_prep_mito_nucleinumberofobjects, 
                             fct = LL.4(), # slope, lower limit, upper limit, ed50
                             curveid= b + e ~ individual_id,
-                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            standrc_priors(e="normal(pe, 2)", b="normal(pb, 1)"), 
                             random=b + c + d  ~ dir_id
                             )
 spm_mito_edge <- standrm_harmony(formula=response ~ dose, data=stan_prep_mito_edge, 
                             fct = LL.4(), # slope, lower limit, upper limit, ed50
                             curveid= b + e ~ individual_id,
-                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            standrc_priors(e="normal(pe, 2)", b="normal(pb, 1)"), 
                             random=b + c + d  ~ dir_id
                             )
 spm_mito_area <- standrm_harmony(formula=response ~ dose, data=stan_prep_mito_area, 
                             fct = LL.4(), # slope, lower limit, upper limit, ed50
                             curveid= b + e ~ individual_id,
-                            standrc_priors(e="normal(pe, 5)", b="normal(pb, 1)"), 
+                            standrc_priors(e="normal(pe, 2)", b="normal(pb, 1)"), 
                             random=b + c + d  ~ dir_id
                             )
 ```
@@ -194,10 +210,6 @@ ed50s_df_hoescht$mean_row <- rowMeans(ed50s_df_hoescht[ ,-1])
 ed50s_df_mito$mean_row <- rowMeans(ed50s_df_mito[ ,-1])
 hist(ed50s_df_hoescht$mean_row)
 hist(ed50s_df_mito$mean_row)
-sensitive_hoescht <- ed50s_df_hoescht %>% slice_min(mean_row, n = 1) 
-resilient_hoescht <- ed50s_df_hoescht %>% slice_max(mean_row, n = 1) 
-sensitive_mito <- ed50s_df_mito %>% slice_min(mean_row, n = 1) 
-resilient_mito <- ed50s_df_mito %>% slice_max(mean_row, n = 1) 
 ```
 
 
@@ -244,43 +256,49 @@ colnames(pred_ed_long_all_join) <- c("individual","feature","ed50_dose", "pred_r
 ```
 
 ```{r}
-# plot groups
-# intensity_sub 
-# count_sub 
-# edge_sub 
+# highlight mice
+sensitive_hoescht <- ed50s_df_hoescht %>% slice_min(mean_row, n = 1) 
+resilient_hoescht <- ed50s_df_hoescht %>% slice_max(mean_row, n = 1) 
+sensitive_mito <- ed50s_df_mito %>% slice_min(mean_row, n = 1) 
+resilient_mito <- ed50s_df_mito %>% slice_max(mean_row, n = 1) 
 
-# sensitive_hoescht <- ed50s_df_hoescht %>% slice_min(mean_row, n = 3) 
-# resilient_hoescht <- ed50s_df_hoescht %>% slice_max(mean_row, n = 3) 
-# sensitive_mito <- ed50s_df_mito %>% slice_min(mean_row, n = 3) 
-# resilient_mito <- ed50s_df_mito %>% slice_max(mean_row, n = 3) 
+pred_ed_long_all_join$selection <- NA
+pred_ed_long_all_join$selection[pred_ed_long_all_join$individual %in% c(unique(resilient_mito$individual),unique(resilient_hoescht$individual))
+] <- "high_mean"
+  pred_ed_long_all_join$selection[pred_ed_long_all_join$individual %in% c(unique(sensitive_mito$individual),unique(sensitive_hoescht$individual))
+] <- "low_mean"                              
 
-sensitive_features <- subset(pred_ed_long_all_join, individual %in% c(sensitive_hoescht$individual, sensitive_mito$individual))
+pred_ed_long_all_join$selection <- pred_ed_long_all_join$selection
+# sensitive_features <- subset(pred_ed_long_all_join, individual %in% c(sensitive_hoescht$individual, sensitive_mito$individual))
 
-resilient_features <- subset(pred_ed_long_all_join, individual %in% c( resilient_hoescht$individual, resilient_mito$individual))
+selected_features <- subset(pred_ed_long_all_join, individual %in% c( resilient_hoescht$individual, resilient_mito$individual,sensitive_hoescht$individual, sensitive_mito$individual))
+
+selected_features <- subset(selected_features,!is.na(selection))
+pred_ed_long_all_join$selection <- as.factor(pred_ed_long_all_join$selection)
+pred_ed_long_all_join$group <- "hoescht"
+pred_ed_long_all_join$group[pred_ed_long_all_join$feature %in% c("mito_edge","mito_intensity","mito_nucleinumberofobjects","mito_area")] <- "mito"
+
+# pred_ed_long_all_join$color_1 <- 
+# 
+# pred_ed_long_all_join$color_2 <-
+```
+
+```{r}
+# high_low_features <- function(dataset, criteria){
+#   
+# }
+# random_features <- function(dataset, criteria){
+#   
+# }
+
 ```
 
 ```{r}
 ggplot(pred_ed_long_all_join) +
    geom_point(mapping = aes(x = ed50_dose, y = pred_response, 
-                          color = feature), size = 0.5) + 
-  # geom_text(data = sensitive_features, aes(x = ed50_dose, y = pred_response, label = individual), size = 2, color = 'blue') +
-  # geom_text(data = resilient_features, aes(x = ed50_dose, y = pred_response, label = individual), size = 2, color = 'darkred') +
-  geom_line(data = sensitive_features,aes(x = ed50_dose, y = pred_response, group = individual), color = 'blue') +
-  geom_line(data = resilient_features,aes(x = ed50_dose, y = pred_response, group = individual), color = 'darkred') +
-    ggrepel::geom_text_repel(aes(x=ed50_dose, y=pred_response,label = individual),
-                             data = resilient_features,
-                 nudge_x = 2,
-                 color = 'darkred',
-               bg.color = "white",
-                  bg.r = 0.25,
-               force = 2,
-               size = 2) +
-    ggrepel::geom_text_repel(aes(x=ed50_dose, y=pred_response,label = individual),
-                             data = sensitive_features,
-                 #nudge_x = 2,
-                 force = 2,
-               bg.color = "white",
-               color = "darkblue",
-                  bg.r = 0.25,
-               size = 2)
+                          color = feature), size = 0.4) + 
+    scale_color_brewer(type = 'div', palette = 7, direction = 1, na.value = NA) +
+    ggalt::geom_encircle(aes(x = ed50_dose, y = pred_response, group = individual, color = selection),  s_shape = 1.5, expand = 0, show.legend = FALSE) + theme_dark() +
+    facet_wrap(~group, ncol=1)
+
 ```
