@@ -1,0 +1,187 @@
+---
+title: "DO #1f consolidated v1"
+author:
+- name: Robert Sellers
+  affiliation: The Jackson Laboratory
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
+abstract: |
+latex_engine: pdflatex
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    number_sections: true
+    theme: lumen
+    toc: yes
+    toc_float: yes
+    df_print: paged
+    # code_folding: "hide"
+  pdf_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pyments
+    keep_tex: yes
+    latex_engine: xelatex
+    number_sections: no
+    toc: no
+    
+---
+
+# Programming environment
+
+```{r}
+setwd("/Users/seller/Desktop/projects/jax_arsenic_toxicology_analysis")
+
+# env
+options(scipen = 999) # suppress sci notation
+
+# contains harmony plate collection class builder
+source("scripts/harmony_utils.R")
+# various add-on scripts and stats tools
+source("scripts/custom_tools.R")
+# standrc code that actually works
+source('scripts/standrc_evals.R')
+
+library(tidyverse)
+library(janitor)
+library(ggplot2) 
+library(ggfortify)
+library(ggpubr)
+library(lme4)
+library(lmerTest)
+library(sjPlot)
+library(nlme)
+library(dplyr)
+library(standrc)
+library(robustbase)
+library(scales)
+library(tibble)
+```
+
+# Data setup
+
+- recontruct initial data fixes to overwrite tempfile
+
+```{r}
+# point to parent data directory
+setwd("data/invitro/")
+selected_dir <- "./do_focus_merge_2"
+# Warning - this currently expects a temp_files data dir 
+# Set overwrite to TRUE when underlying data dir has been changed
+harmony_collection <- harmony_create_collection(dir = selected_dir, overwrite = FALSE)
+```
+
+# Batch corrections
+
+- control group 0 concentration (tbd)
+- plate to plate (with lme4 or stan)
+
+```{r}
+# 
+```
+
+# Analytics data construction
+
+```{r}
+feature_subset <- harmony_collection$all_plates %>%
+  group_by(dir) %>%
+  mutate(dir_id = cur_group_id()) %>%
+  group_by(individual) %>%
+  mutate(individual_id = cur_group_id())
+```
+
+# Dose response evaluation
+
+## Transformation
+
+```{r}
+stan_prep_hoescht_dark <- prepare_data_for_stan('infocus_nucleus_hoechst_ser_dark_1px_mean',
+                                        feature_subset, 
+                                        log_ = FALSE)
+```
+
+## DRC
+
+```{r}
+library(magic)
+# stan_prep_hoescht_dark$fdose <- factor(stan_prep_hoescht_dark$dose)
+options(mc.cores = parallel::detectCores())
+m.drc <- drc::drm(response ~ dose, 
+  data = stan_prep_hoescht_dark,
+  separate = TRUE, # test only overnight...
+  curveid = individual_id,
+  type = 'continuous',
+  fct = drc::LL.4()
+  )
+```
+
+## StanDRC
+
+```{r}
+m.stan <- standrm_harmony(formula=response ~ dose, data=stan_prep_hoescht_dark, 
+                            fct = LL.4(), # slope, lower limit, upper limit, ed50
+                            curveid= b + e ~ individual_id,
+                            #standrc_priors(e="normal(pe, 2)",b="normal(pb, 1)"),
+                            random=b + c + d ~ dir_id,
+                          iter = 300, # unhelpful
+                          #chains = 4 # unhelpful
+                            )
+```
+
+## DRC logic
+
+```{r}
+prepare_ed50s_stan <- function(model_, original_data){
+  ed50_stan <- ED(model_, respLev=c(50))
+  df = data.frame("individual_id" = sort(unique(original_data$individual_id)), "ed50" = colMedians(ed50_stan$`50`))
+  pred_stan <- predict_harmony(model_, newdata = newdata)
+  df$pred <- apply(pred_stan, 2, function(x) mean(x, na.rm=TRUE))
+  df$group <- "stan"
+  return (df)
+
+}
+
+prepare_ed50s_drc <- function(model_, original_data){
+  ed50_drc <- as.data.frame(drc::ED(model_, respLev=c(50)))
+ed50_drc$individual <- str_match(rownames(ed50_drc), ":\\s*(.*?)\\s*:")[,2]
+
+  arrange(as.numeric(individual))
+  df = data.frame("individual_id" = sort(unique(original_data$individual_id)), "ed50" = ed50_drc$Estimate)
+  df$pred <- predict(model_, df)
+  df$group <- "drc"
+  return (df)
+}
+
+
+# keep this
+newdata.stan <- prepare_ed50s_stan(m.stan, feature_subset)
+
+# keep this
+newdata.drc <- prepare_ed50s_drc(m.drc, feature_subset)
+
+ggplot(rbind(newdata.drc,newdata.stan)) +
+  geom_point(aes(x=ed50,y=pred,color=group)) +
+  xlim(-1,10) + geom_text(aes(label=individual_id,x=ed50,y=pred),hjust=0, vjust=0, size = 2)
+```
+
+
+# predict drc
+
+```{r}
+
+
+```
+
+
+
+
+
+
+
+
+```{r}
+harmony_collection$saved_models <- list("spm_mito_nucleinumberofobjects" = stan_prep_mito_nucleinumberofobjects, "drc_mito_nucleinumberofobjects" = drc_mito_nucleinumberofobjects)
+
+
+
+```
