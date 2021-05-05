@@ -1,5 +1,4 @@
 standrm_harmony <- function(formula, data, fct, curveid=NULL, random=NULL, priors=standrc_priors(), ...){
-
   callDetail <- match.call()
   
   mf <- model.frame(formula, data)
@@ -197,13 +196,17 @@ standrm_harmony <- function(formula, data, fct, curveid=NULL, random=NULL, prior
                     ppc,                                     
                     "}",
                     sep="")
+  # sace example data
+  # fileConn<-file("~/Desktop/projects/jax_arsenic_toxicology_analysis/temp_files/stan_example.stan")
+  # writeLines(stancode, fileConn, sep="\n")
+  # close(fileConn)
+  
   rstan_options(auto_write = TRUE)
   options(mc.cores = parallel::detectCores())
   fit <- stan(model_code = stancode, 
               model_name = "test_arsenic",
               data = stan_dat
               , ...)
-  #browser()
   out <- list()
   out$call <- callDetail
   out$data <- stan_dat
@@ -319,9 +322,12 @@ plot_new <- function(x, ..., ndose=25, logx=FALSE, lim=NULL){
   # newd$pmax <- apply(pm, 2, function(x) quantile(x, 0.975, na.rm=TRUE))
   
   if (logx) lxt <- "+ coord_trans(x='log')" else lxt <- NULL
-
-  eval(parse(text=paste("ggplot(dframe, aes(x=",  as.character(x$call$formula[[3]]),", y=", xcc, ", colour=", as.character(x$call$curveid[[3]]),")) +  geom_point() + geom_line(data=newd, aes(y=p))", lxt)) ) 
-
+#browser()
+  chard <-  paste(ggplot(dframe, aes(x= dose , y= response , colour=  )) +  geom_point() + geom_line(data=newd, aes(y=p)))
+  #eval(parse(text=paste("ggplot(dframe, aes(x=",  as.character(x$call$formula[[3]]),", y=", xcc, ", colour=", as.character(x$call$curveid[[3]]),")) +  geom_point() + geom_line(data=newd, aes(y=p))", lxt)) ) 
+return (list("command" =chard ,
+             "dframe" = dframe,
+             "newd" = newd))
 }
 
 predict_harmony <- function(object, ..., newdata=NULL){ 
@@ -355,4 +361,255 @@ predict_harmony <- function(object, ..., newdata=NULL){
     })
   })
   return(pred)
+}
+
+standrm_harmony_v2 <- function(formula, data, fct, curveid=NULL, random=NULL, priors=standrc_priors(), ...){
+  callDetail <- match.call()
+  
+  mf <- model.frame(formula, data)
+  
+  # handle curve
+  cid <- as.character(curveid)[3]
+  idc <- as.numeric(data$individual_id)
+  J <- length(unique(idc))
+  stsp <- strsplit(as.character(curveid)[2], "+")[[1]]
+  cin <- stsp[!stsp %in% c(" ", "+")]
+  pnl <- sapply(fct$names, function(x) x %in% cin)
+  curvenames <- levels(as.factor(data$individual_id))
+  
+  # handle random effects
+  rid <- as.character(random)[3]
+  idr <- as.numeric(data$dir_id)
+  K <- length(unique(idr))
+  stsp <- strsplit(as.character(random)[2], "+")[[1]]
+  rin <- stsp[!stsp %in% c(" ", "+")]
+  pnlr <- sapply(c("b", "c", "d", "e", "f"), function(x) x %in% rin)
+
+  # handle fixed?
+  fix <- fct$fixed
+  isfix <- !is.na(fix)
+  jv <- rep(J, 5)
+  jv[!isfix][!pnl] <- 1
+  
+  N <- nrow(mf) 
+  y <- mf[,1]
+  x <- mf[,2]   
+  x[x == 0] <- 0.5*min(x[x > 0])
+  fix[5] <- 0
+
+  # setup priors
+
+# priors found
+# b & c
+# these will typically default at "normal(px,100)
+priors$b <- "normal(pb, 1)"
+priors$e <- "normal(pe, 2)"
+pb <- rep(0, jv[1]) # this should be 237 slope estimates?
+pe <- rep(median(x), jv[4])
+pf <- rep(0, jv[5])
+
+  # check general direction
+  # is mean max dose greater than mean min dose?
+  if (mean(y[x == min(x)]) < mean(y[x == max(x)])){
+    print("General negative slope encountered")
+    pc <- 0.01
+    pd <- 100
+    #if (is.null(priors$pc)) pc <- rep(min(y), jv[2]) else pc <- priors$pc
+    #if (is.null(priors$pd)) pd <- rep(max(y), jv[3]) else pd <- priors$pd
+  } else {
+    print("General positive slope encountered")
+    pc <- 100
+    pd <- 0.01
+    #if (is.null(priors$pd)) pd <- rep(min(y), jv[3]) else pd <- priors$pd
+    #if (is.null(priors$pc)) pc <- rep(max(y), jv[2]) else pc <- priors$pc
+  }  
+
+  stan_dat <- list(
+    N = nrow(mf),
+    J = length(unique(idc)),
+    K = length(unique(idr)),
+    idc = as.numeric(data$individual_id),
+    idr = as.numeric(data$dir_id),
+    y = mf[,1],
+    x = mf[,2],
+    pb = rep(0, jv[1]),
+    pc = 0.01,
+    pd = 100,
+    pe = rep(median(x), jv[4]),
+    pf = rep(0, jv[5])
+  )
+  
+  # data 
+  dJ <- "int<lower=0> idc[N]; int<lower=0> J;" 
+  dK <- "int<lower=0> idr[N]; int<lower=0> K;" 
+  
+  # priors
+  dJp <- c("real pb[J];", "real pc[J];", "real pd[J];", "real pe[J];", "real pf[J];")[!isfix]
+  dp <- c("real pb;", "real pc;", "real pd;", "real pe;", "real pf;")[!isfix]  
+  dpc <- paste(sapply(1:length(pnl), function(i) if (pnl[i]) dJp[i] else dp[i]), collapse=" ")
+  
+  # define parameters
+  paraJ <- c("real slope[J];", "real lasy[J];", "real uasy[J];", "real<lower=0> ed[J];", "real assym[J];")[!isfix]
+  para <- c("real slope;", "real lasy;", "real uasy;", "real<lower=0> ed;", "real assym;")[!isfix]
+  parac <- paste(sapply(1:length(pnl), function(i) if (pnl[i]) paraJ[i] else para[i]), collapse=" ")
+  
+  # random effects
+  rpara <- c("real rslope[K];", "real rlasy[K];", "real ruasy[K];", "real red[K];", "real rassym[K];")
+  rparasig <- c("real<lower=0> sigmasq_slope;", "real<lower=0> sigmasq_lasy;", "real<lower=0> sigmasq_uasy;", "real<lower=0> sigmasq_ed;", "real<lower=0> sigmasq_assym;")
+  rparac <- paste(c(rpara[pnlr], rparasig[pnlr]), collapse=" ")
+  
+  trap <- c("slope", "lasy", "uasy", "ed", "assym")[!isfix]
+  traj <- c("slope[idc[i]]", "lasy[idc[i]]", "uasy[idc[i]]", "ed[idc[i]]", "assym[idc[i]]")[!isfix]
+  tra <- character(length(fix))
+  tra[!isfix] <- sapply(1:length(pnl), function(i) if (pnl[i]) traj[i] else trap[i])
+  tra[isfix] <- fix[isfix]
+
+  stra <- paste(c("real<lower=0> sigma_slope;", "real<lower=0> sigma_lasy;", "real<lower=0> sigma_uasy;", "real<lower=0> sigma_ed;", "real<lower=0> sigma_assym;")[pnlr], collapse=" ")
+  strasq <- paste(c("sigma_slope <- sqrt(sigmasq_slope);",
+                    "sigma_lasy <- sqrt(sigmasq_lasy);",
+                    "sigma_uasy <- sqrt(sigmasq_uasy);",
+                    "sigma_ed <- sqrt(sigmasq_ed);",
+                    "sigma_assym <- sqrt(sigmasq_assym);")[pnlr], collapse=" ")
+  trar <- c(paste("(", tra[1], " + rslope[idr[i]] )"), 
+            paste("(", tra[2], " + rlasy[idr[i]] )"), 
+            paste("(", tra[3], " + ruasy[idr[i]] )"), 
+            paste("(", tra[4], " + red[idr[i]] )"), 
+            paste("(", tra[5], " + rassym[idr[i]] )"))
+  trc <- sapply(1:length(tra), function(i) if (pnlr[i]) trar[i] else tra[i])    
+  trans <- paste(stra, strasq, "sigma_y <- sqrt(sigmasq_y); for(i in 1:N){ mu[i] <-", trc[2], " + (", trc[3], "-", trc[2], ") / (1 + exp(-exp(", trc[1], ") * (log(x[i]/", trc[4], "))))^exp(", trc[5], ");}", collapse="")
+
+  ### population parameters
+  popJ <- c("real pslope[J];", "real plasy[J];", "real puasy[J];", "real ped[J];", "real passym[J];")
+  pop <- c("real pslope;", "real plasy;", "real puasy;", "real ped;", "real passym;")
+  pop[!isfix] <- sapply(1:length(pnl), function(i) if (pnl[i]) popJ[!isfix][i] else pop[!isfix][i]) 
+  popc <- paste(pop, collapse=" ")
+  rnpara <- c("real rnslope;", "real rnlasy;", "real rnuasy;", "real rned;", "real rnassym;")
+  rnparac <- paste(rnpara[pnlr], collapse=" ")
+  ppp <- c("slope", "lasy", "uasy", "ed", "assym")[!isfix]
+  ppj <- c("slope[j]", "lasy[j]", "uasy[j]", "ed[j]", "assym[j]")[!isfix]
+  pp <- character(length(fix))
+  pp[!isfix] <- sapply(1:length(pnl), function(i) if (pnl[i]) ppj[i] else ppp[i])
+  pp[isfix] <- fix[isfix]
+  po <- c("pslope", "plasy", "puasy", "ped", "passym")
+  poj <- paste("for (j in 1:J)", c("pslope[j]", "plasy[j]", "puasy[j]", "ped[j]", "passym[j]"))
+  pof <- character(length(fix))
+  pof[!isfix] <- sapply(1:length(pnl), function(i) if (pnl[i]) poj[!isfix][i] else po[!isfix][i])
+  pof[isfix] <- po[isfix]
+  ppc <- paste(pof[1], " <- ", pp[1], if (pnlr[1]) " + rnslope", ";", pof[2], "<-", pp[2], if (pnlr[2]) " + rnlasy", ";", pof[3], " <- ", pp[3], if (pnlr[3]) " + rnuasy", ";", pof[4], " <- ", pp[4], if (pnlr[4]) " + rned", ";", pof[5], " <- ", pp[5], if (pnlr[5]) " + rnassym", ";")
+  
+  modp <- paste(c("rnslope ~ normal(0, sigma_slope);", "rnlasy ~ normal(0, sigma_lasy);", "rnuasy ~ normal(0, sigma_uasy);", "rned ~ normal(0, sigma_ed);", "rnassym ~ normal(0, sigma_assym);")[pnlr], collapse=" ") 
+  
+  
+  #### model statements
+  mod <- paste(c(paste("slope ~", priors$b, ";"), 
+                 paste("lasy ~", priors$c, ";"), 
+                 paste("uasy ~", priors$d, ";"), 
+                 paste("ed ~", priors$e, ";"), 
+                 paste("assym ~", priors$f, ";"))[!isfix], collapse=" ") 
+  
+  mody <- paste("sigmasq_y ~", priors$sy, "; y ~ normal(mu, sigma_y);")
+  
+  modr <- paste(c("rslope ~ normal(0, sigma_slope);", "rlasy ~ normal(0, sigma_lasy);", "ruasy ~ normal(0, sigma_uasy);", "red ~ normal(0, sigma_ed);", "rassym ~ normal(0, sigma_assym);")[pnlr], collapse=" ") 
+  modrsig <- paste(c(paste("sigmasq_slope ~", priors$sb, ";"), 
+                     paste("sigmasq_lasy ~", priors$sc, ";"), 
+                     paste("sigmasq_uasy ~", priors$sd, ";"), 
+                     paste("sigmasq_ed ~", priors$se, ";"), 
+                     paste("sigmasq_assym ~",priors$sf, ";"))[pnlr], collapse=" ") 
+  
+  # new random effects for derived ed
+  moded <- paste(c("rnslope ~ normal(0, sigma_slope);", "rnlasy ~ normal(0, sigma_lasy);", "rnuasy ~ normal(0, sigma_uasy);", "rned ~ normal(0, sigma_ed);", "rnassym ~ normal(0, sigma_assym);")[pnlr], collapse=" ") 
+  
+  stancode <- paste("data {", 
+                    "int<lower=0> N; real y[N];",
+                    "real<lower=0> x[N];", 
+                    if (!is.null(idc)) dJ,
+                    if (!is.null(random)) dK,
+                    dpc,
+                    "} ",
+                    "parameters { real<lower=0> sigmasq_y;",
+                    parac,
+                    if (!is.null(random)) rparac, 
+                    if (!is.null(random)) rnparac,  
+                    "} ",
+                    "transformed parameters {",
+                    "real<lower=0> sigma_y;",
+                    "real mu[N];",                   
+                    trans,                      
+                    "} ",
+                    "model {",
+                    mod,
+                    mody,                     
+                    if (!is.null(random)) modr,
+                    if (!is.null(random)) modrsig,    
+                    if (!is.null(random)) modp,                    
+                    "}",
+                    "generated quantities {",
+                    "real residuals[N];", 
+                    "real log_lik[N];",
+                    popc,
+                    "for (i in 1:N){",
+                    "residuals[i] <- y[i] - mu[i];",
+                    "log_lik[i] <- normal_log(y[i], mu[i], sigma_y);",
+                    "}",
+                    ppc,                                     
+                    "}",
+                    sep="")
+  
+  rstan_options(auto_write = TRUE)
+  options(mc.cores = parallel::detectCores())
+  fit <- stan(model_code = stancode, 
+              model_name = "test_arsenic",
+              data = stan_dat
+              , ...)
+  #browser()
+  out <- list()
+  out$call <- callDetail
+  out$data <- stan_dat
+  out$model <- stancode
+  out$stan <- fit
+  out$fixedpars <- trap
+  out$pars <- c("pslope", "plasy", "puasy", "ped", "passym")
+  if (!is.null(random)) out$random <- c("slope", "lasy", "uasy", "ed", "assym")[pnlr] 
+  out$curves <- list(pars=pnl, J=J, names=curvenames)
+  out$fixed <- fix
+  out$fct <- fct
+  class(out) <- "standrc"
+  return(out)
+}
+
+### Custom extraction functions
+
+prepare_ed50s_drc <- function(model_, original_data){
+  ed50_drc <- as.data.frame(drc::ED(model_, 50))
+ed50_drc$individual <- str_match(rownames(ed50_drc), ":\\s*(.*?)\\s*:")[,2]
+  # this might be a problem
+  df = data.frame("individual_id" = as.character(ed50_drc$individual), "dose" = ed50_drc$Estimate)
+    browser()
+  df$pred <- predict(model_, data.frame(
+    dose = ed50_drc$Estimate,
+    individual_id = str_match(rownames(ed50_drc), ":\\s*(.*?)\\s*:")[,2]
+  ))
+  df$group <- "drc"
+  df$ed50 <- df$dose
+  return (df)
+}
+
+# returns individual id to original value
+map_do_to_original <- function(df_new, df_org){
+  lookup_df <- df_org[,c('individual','individual_id')]
+  return(plyr::join(df_new, distinct(lookup_df), by = "individual_id"))
+}
+
+prepare_ed50s_stan <- function(model_, original_data){
+  ed50_stan <- ED(model_, respLev=c(50))
+  df = data.frame("individual_id" = sort(unique(original_data$individual_id)), "dose" = colMedians(ed50_stan$`50`))
+  pred_stan <- predict_harmony(model_, newdata = df)
+    df <- df %>% 
+  rename(
+    ed50 = dose
+    )
+  df$pred <- apply(pred_stan, 2, function(x) mean(x, na.rm=TRUE))
+  df$group <- "stan"
+  return (df)
+
 }
