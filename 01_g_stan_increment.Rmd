@@ -1,0 +1,165 @@
+---
+title: "DO #1g stan incremental analysis"
+author:
+- name: Robert Sellers
+  affiliation: The Jackson Laboratory
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
+abstract: |
+latex_engine: pdflatex
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    number_sections: true
+    theme: lumen
+    toc: yes
+    toc_float: yes
+    df_print: paged
+    # code_folding: "hide"
+  pdf_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pyments
+    keep_tex: yes
+    latex_engine: xelatex
+    number_sections: no
+    toc: no
+    
+---
+```{r}
+# point to parent data directory
+setwd("data/invitro/")
+selected_dir <- "./do_focus_merge_2"
+# Warning - this currently expects a temp_files data dir 
+# Set overwrite to TRUE when underlying data dir has been changed
+harmony_collection <- harmony_create_collection(dir = selected_dir, overwrite = FALSE)
+
+# env
+options(scipen = 999) # suppress sci notation
+
+# contains harmony plate collection class builder
+source("scripts/harmony_utils.R")
+# various add-on scripts and stats tools
+source("scripts/custom_tools.R")
+# standrc code that actually works
+source('scripts/standrc_evals.R')
+```
+
+```{r}
+library(rstan)
+
+
+plot_posterior_growth_ci <- function(fit, dat){
+  Y_mean <- extract(fit, "Y_mean")
+  Y_mean_cred <- apply(Y_mean$Y_mean, 2, quantile, c(0.05, 0.95))
+  Y_mean_mean <- apply(Y_mean$Y_mean, 2, mean)
+  
+  Y_pred <- extract(fit, "Y_pred")
+  Y_pred_cred <- apply(Y_pred$Y_pred, 2, quantile, c(0.05, 0.95))
+  Y_pred_mean <- apply(Y_pred$Y_pred, 2, mean)
+  plot(dat$Y ~ dat$x, xlab="x", ylab="Y", 
+     ylim=c(-1, 101), main="Non-linear Growth Curve")
+  lines(dat$x, Y_mean_mean)
+  points(dat$x, Y_pred_mean, pch=19)
+  lines(dat$x, Y_mean_cred[1,], col=4)
+  lines(dat$x, Y_mean_cred[2,], col=4)
+  lines(dat$x, Y_pred_cred[1,], col=2)
+  lines(dat$x, Y_pred_cred[2,], col=2)
+  legend(x="bottomright", bty="n", lwd=2, lty=c(NA, NA, 1, 1,1),
+         legend=c("observation", "prediction", "mean prediction",
+                  "90% mean cred. interval", "90% pred. cred. interval"),
+         col=c(1,1,1,4,2),  pch=c(1, 19, NA, NA, NA))
+}
+```
+
+### Original growth model
+
+```{r}
+feature_subset <- harmony_collection$all_plates %>%
+  group_by(dir) %>%
+  mutate(dir_id = cur_group_id()) %>%
+  group_by(individual) %>%
+  mutate(individual_id = cur_group_id())
+
+
+feature_subset <- prepare_data_for_stan('infocus_nucleus_hoechst_ser_dark_1px_mean',
+                                        feature_subset, 
+                                        log_ = FALSE)
+
+
+feature_subset_2 <- arrange(feature_subset, dose)   %>%
+  group_by(individual_id) %>%
+  select(individual_id, response, dose, mouse) %>% 
+  rename(Y = response, x = dose) 
+
+
+dat <- list(
+  "N" = nrow(feature_subset_2),  
+  "x" = feature_subset_2$x,
+  "Y" = feature_subset_2$Y)
+
+stanmodel <- "
+functions {
+  real LL4(real x, real b, real c, real d, real ehat) {
+    return c + (d - c) / (1 + exp(b * (log(x) - ehat)));
+  }
+}
+data {
+  int<lower=0> N; 
+  real<lower=0> x[N];
+  real Y[N]; 
+} 
+parameters {
+  real alpha; 
+  real beta;  
+  real<lower=.5,upper= 1> lambda; // original gamma in the JAGS example  
+  real<lower=0> tau; 
+} 
+transformed parameters {
+  real sigma; 
+  real m[N];
+  for (i in 1:N) 
+    m[i] = alpha - beta * pow(lambda, x[i]);
+  sigma = 1 / sqrt(tau); 
+} 
+model {
+  // priors
+  alpha ~ normal(0.0, 1000); 
+  beta ~ normal(0.0, 1000); 
+  lambda ~ uniform(.5, 1); 
+  tau ~ gamma(.0001, .0001); 
+  // likelihood
+  Y ~ normal(m, sigma);   
+}
+generated quantities{
+  real Y_mean[N]; 
+  real Y_pred[N]; 
+  for(i in 1:N){
+    // Posterior parameter distribution of the mean
+    Y_mean[i] = alpha - beta * pow(lambda, x[i]);
+    // Posterior predictive distribution
+    Y_pred[i] = normal_rng(Y_mean[i], sigma);   
+}
+}
+"
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+fit <- stan(model_code = stanmodel, 
+            model_name = "GrowthCurve", 
+            data = dat,
+            refresh=0)
+```
+# parameter fits
+## 1 parameter
+
+ https://academic.oup.com/toxsci/article/66/2/298/1734199
+
+```{r}
+# baseline model
+print(fit, c("alpha", "beta", "lambda", "sigma"))
+plot_posterior_growth_ci(fit,dat)
+```
+
+```{r}
+plot_posterior_growth_ci(fit,dat)
+```
