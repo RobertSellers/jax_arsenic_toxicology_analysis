@@ -43,12 +43,31 @@ source("scripts/harmony_utils.R")
 source("scripts/custom_tools.R")
 # standrc code that actually works
 source('scripts/standrc_evals.R')
+
+library(rstan)
 ```
 
 ```{r}
-library(rstan)
+# function for https://benchmarkdose.org/
+# garbage
+benchmark_save <- function(data){
+  data <- data %>%
+    group_by(individual_id) %>%
+    sample_n_groups(7) %>%
+    mutate(individual_id = cur_group_id()-1) %>%
+    arrange(dose,individual_id,response)
+  # benchmark_save(feature_subset)
+  data$dose[data$dose == 0] <- 0.001
+
+  write.table(data.frame("Dose" = data$dose, "Individual" = data$individual_id, "Response" = as.integer(data$response)), "~/Desktop/example.tsv",sep = '\t', row.names = F,quote = FALSE)
+}
+#benchmark_save(feature_subset)
+```
+- https://discourse.mc-stan.org/t/fitting-a-non-linear-growth-model-with-stan/4246
+- https://www.magesblog.com/post/2015-11-03-loss-developments-via-growth-curves-and/
 
 
+```{r}
 plot_posterior_growth_ci <- function(fit, dat){
   Y_mean <- extract(fit, "Y_mean")
   Y_mean_cred <- apply(Y_mean$Y_mean, 2, quantile, c(0.05, 0.95))
@@ -72,6 +91,16 @@ plot_posterior_growth_ci <- function(fit, dat){
 }
 ```
 
+Model 1: y = a with a > 0
+
+Model 2: y = a exp(x/b) with a > 0
+
+Model 3: y = a exp(±(x/b)d) with a > 0, b > 0, d ≥ 1
+
+Model 4: y = a [c – (c – 1) exp(−x/b)] with a > 0, b > 0, c > 0
+
+Model 5: y = a [c – (c – 1) exp(−(x/b)d)] with a > 0, b > 0, c > 0, d ≥ 1 where y is any
+
 ### Original growth model
 
 ```{r}
@@ -92,54 +121,100 @@ feature_subset_2 <- arrange(feature_subset, dose)   %>%
   select(individual_id, response, dose, mouse) %>% 
   rename(Y = response, x = dose) 
 
+# slope_test <- feature_subset_2 %>% 
+#   group_by(individual_id) %>% 
+#   nest() %>% 
+#   mutate(model = map(data, ~ lm(Y ~ 1 + x, data = .x) %>% tidy)) %>% 
+#   unnest(model) %>% 
+#   filter(term == 'x')
 
 dat <- list(
   "N" = nrow(feature_subset_2),  
   "x" = feature_subset_2$x,
-  "Y" = feature_subset_2$Y)
+  "Y" = feature_subset_2$Y,
+  "pb" = 0,
+  "pc" = 100,
+  "pd" = 0.01,
+  "pe" = 0.75,
+  "pf" = 0)
 
 stanmodel <- "
 functions {
-  real LL4(real x, real b, real c, real d, real ehat) {
-    return c + (d - c) / (1 + exp(b * (log(x) - ehat)));
+  real LL4(real x, real slope, real lasy, real uasy, real ed) {
+    return lasy  + ( uasy - lasy ) / (1 + exp(-exp( slope ) * (log(x/ ed ))))^exp( 0 );
+  }
+  real LL4_test(real x, real slope){
+    return (1-exp(-slope*x));
+  }
+  real growthFunction(real x, real a, real b, real lambda){
+    return a - b * pow(lambda, x);
+  }
+  real posteriorDistributionOfMean(real x, real a, real b, real lambda){
+    return a - b * pow(lambda, x);
   }
 }
 data {
   int<lower=0> N; 
   real<lower=0> x[N];
   real Y[N]; 
+  // from standrc
+  real pb; 
+  real pc; 
+  real pd; 
+  real pe;
 } 
 parameters {
-  real alpha; 
-  real beta;  
+  real a;
+  real b;
   real<lower=.5,upper= 1> lambda; // original gamma in the JAGS example  
   real<lower=0> tau; 
+  // from standrc
+  real<lower=0> ed;
+  real<lower=0> sigmasq_y;
+  real slope; 
+  real lasy; 
+  real uasy; 
 } 
 transformed parameters {
-  real sigma; 
-  real m[N];
-  for (i in 1:N) 
-    m[i] = alpha - beta * pow(lambda, x[i]);
-  sigma = 1 / sqrt(tau); 
+  real<lower=0> sigma_y;
+  //real sigma; 
+  real mu[N];
+  real mu2[N];
+  sigma_y <- sqrt(sigmasq_y); 
+  for (i in 1:N){
+    mu[i] = growthFunction(x[i], a, b, lambda);
+    //mu2[i] = LL4(x[i], slope, lasy, uasy, ed);
+    mu2[i] = LL4_test(x[i], slope);
+  }
+  //sigma = 1 / sqrt(tau); 
 } 
 model {
   // priors
-  alpha ~ normal(0.0, 1000); 
-  beta ~ normal(0.0, 1000); 
+  //slope ~ normal(pb, 100) ; 
+  //lasy ~ normal(pc, 100) ; 
+  //uasy ~ normal(pd, 100) ; 
+  //ed ~ normal(pe, 100) ;
+  sigmasq_y ~ inv_gamma(0.001, 0.001) ; 
+  a ~ normal(0.0, 1000); 
+  b ~ normal(0.0, 1000); 
   lambda ~ uniform(.5, 1); 
   tau ~ gamma(.0001, .0001); 
-  // likelihood
-  Y ~ normal(m, sigma);   
+  // likelihood function
+  Y ~ normal(mu, sigma_y);   
+  //Y ~ normal(mu, sigma);   
 }
 generated quantities{
+  real residuals[N];
+  //real log_lik[N];
   real Y_mean[N]; 
   real Y_pred[N]; 
   for(i in 1:N){
-    // Posterior parameter distribution of the mean
-    Y_mean[i] = alpha - beta * pow(lambda, x[i]);
+    Y_mean[i] = posteriorDistributionOfMean(x[i], a, b, lambda);
     // Posterior predictive distribution
-    Y_pred[i] = normal_rng(Y_mean[i], sigma);   
-}
+    Y_pred[i] = normal_rng(Y_mean[i], sigma_y);    
+    residuals[i] <- Y[i] - mu[i];
+    //log_lik[i] <- normal_log(Y[i], mu[i], sigma_y);
+    }
 }
 "
 rstan_options(auto_write = TRUE)
@@ -147,7 +222,14 @@ options(mc.cores = parallel::detectCores())
 fit <- stan(model_code = stanmodel, 
             model_name = "GrowthCurve", 
             data = dat,
-            refresh=0)
+            chains = 4)
+
+# baseline model
+#print(fit, c("alpha", "beta", "lambda", "sigma"))
+ traceplot(fit, pars=c("a","b","lambda","tau", "sigma_y"))
+# trankplot(fit, pars=c("a","b","lambda","tau", "sigma"))
+ precis(fit, pars=c("a","b","lambda","tau", "sigma"))
+plot_posterior_growth_ci(fit,dat)
 ```
 # parameter fits
 ## 1 parameter
@@ -156,10 +238,9 @@ fit <- stan(model_code = stanmodel,
 
 ```{r}
 # baseline model
-print(fit, c("alpha", "beta", "lambda", "sigma"))
-plot_posterior_growth_ci(fit,dat)
-```
-
-```{r}
+#print(fit, c("alpha", "beta", "lambda", "sigma"))
+traceplot(fit, pars=c("alpha","beta","lambda","tau", "sigma"))
+trankplot(fit, pars=c("alpha","beta","lambda","tau", "sigma"))
+precis(fit, pars=c("alpha","beta","lambda","tau", "sigma"))
 plot_posterior_growth_ci(fit,dat)
 ```

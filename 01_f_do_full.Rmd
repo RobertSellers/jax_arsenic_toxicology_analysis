@@ -58,6 +58,7 @@ library(scales)
 library(tibble)
 library(broom)
 library(plotly)
+library(sqldf)
 ```
 
 # Data setup
@@ -83,15 +84,16 @@ harmony_collection <- harmony_create_collection(dir = selected_dir, overwrite = 
 ```
 
 ```{r}
-setwd("../analyses")
-callan_meansum_log <- readRDS('infocus_meansum_log.RDS')
-callan_log_dark <- subset(callan_meansum_log, outcome == 'infocus_nucleus_hoechst_ser_dark_1px_mean')[,c("individual","EC_50")]
+# setwd("../analyses")
+# callan_meansum_log <- readRDS('infocus_meansum_log.RDS')
+# callan_log_dark <- subset(callan_meansum_log, outcome == 'infocus_nucleus_hoechst_ser_dark_1px_mean')[,c("individual","EC_50")]
 ```
 
 # Analytics data construction
 
 ```{r}
 feature_subset <- harmony_collection$all_plates %>%
+  mutate(fdose=factor(dose)) %>%
   group_by(dir) %>%
   mutate(dir_id = cur_group_id()) %>%
   group_by(individual) %>%
@@ -111,8 +113,8 @@ prepare_ed50s_stan <- function(model_, original_data){
     )
   df$pred <- apply(pred_stan, 2, function(x) mean(x, na.rm=TRUE))
   df$group <- "stan"
+  df$individual_id <- as.character(df$individual_id)
   return (df)
-
 }
 
 prepare_ed50s_drc <- function(model_, original_data){
@@ -120,33 +122,19 @@ prepare_ed50s_drc <- function(model_, original_data){
 ed50_drc$individual <- str_match(rownames(ed50_drc), ":\\s*(.*?)\\s*:")[,2]
   # this might be a problem
   df = data.frame("individual_id" = as.character(ed50_drc$individual), "dose" = ed50_drc$Estimate)
-    browser()
   df$pred <- predict(model_, data.frame(
     dose = ed50_drc$Estimate,
     individual_id = str_match(rownames(ed50_drc), ":\\s*(.*?)\\s*:")[,2]
   ))
   df$group <- "drc"
   df$ed50 <- df$dose
-  return (df)
-}
-
-prepare_ed50s_drc_v2 <- function(model_, original_data){
-  ed50_drc <- as.data.frame(ED(model_, c(50), interval="fls",type = "relative", display = FALSE))
-ed50_drc$individual <- str_match(rownames(ed50_drc), ":\\s*(.*?)\\s*:")[,2]
-  # this might be a problem
-  df = data.frame("individual_id" = as.character(ed50_drc$individual), "dose" = ed50_drc$Estimate)
-    # browser()
-  df$pred <- predict(model_, data.frame(
-    dose = ed50_drc$Estimate,
-    individual_id = str_match(rownames(ed50_drc), ":\\s*(.*?)\\s*:")[,2]
-  ))
-  df$group <- "drc"
-  df$ed50 <- df$dose
+  df$dose <- NULL
   return (df)
 }
 
 # batch correction lme4 auto script
-batch_correct <- function(formula_,feature, data, r.eff, target_col){
+batch_correct <- function(formula_,feature, data, r.eff, target_col, debug = FALSE){
+  if (debug) browser()
   pheno_raw <- as.numeric(unlist(data[,c(feature)]))
   mn.pheno <- mean(pheno_raw, na.rm=TRUE)
   sd.pheno <- sd(pheno_raw, na.rm=TRUE)
@@ -167,50 +155,52 @@ map_do_to_original <- function(df_new, df_org){
 }
 ```
 
-## Transformation
+## Transformations / batch corrections
 
 ```{r}
-stan_prep_hoescht_dark <- prepare_data_for_stan('infocus_nucleus_hoechst_ser_dark_1px_mean',
-                                        feature_subset, 
+f_ <- formula(pheno ~ (1|group_pair/dir)) 
+stan_prep_hoescht_dark <- feature_subset
+stan_prep_hoescht_dark$response <- feature_subset$infocus_nucleus_hoechst_ser_dark_1px_mean
+
+stan_prep_hoescht_dark$response  <- batch_correct(formula_ = f_, 'response', stan_prep_hoescht_dark, r.eff = 'dir:group_pair', target_col = 'dir', debug=FALSE)
+
+# running twice -- apply scale 
+stan_prep_hoescht_dark <- prepare_data_for_stan('response',
+                                        stan_prep_hoescht_dark,
+                                        scale = TRUE,
                                         log_ = FALSE)
-stan_prep_hoescht_dark$fdose <- as.factor(stan_prep_hoescht_dark$dose)
-
-f_ <- formula(pheno ~ (1|mouse) + (1|fdose) + (1|group_pair/dir)) 
-
-stan_prep_hoescht_dark$response  <- batch_correct(formula_ = f_, 'response', stan_prep_hoescht_dark, r.eff = 'dir:group_pair', target_col = 'dir')
-
 ```
 
-## DRC
+## DRC initial stage + baseline
 
 ```{r}
-library(magic) # ridiculous
-# stan_prep_hoescht_dark$fdose <- factor(stan_prep_hoescht_dark$dose)
+library(magic) # this is added because of an environment mismatch somewhere
+
 options(mc.cores = parallel::detectCores())
 m.drc <- drc::drm(response ~ dose, 
   data = stan_prep_hoescht_dark,
-  # separate = TRUE, 
-  # robust = "mean",
-  # bcVal = 0,
+  separate = TRUE, # make true if needing quick results
   curveid = individual_id,
   type = 'continuous',
   fct = drc::LL.4()
   )
+
 m.drc.single <- drc::drm(response ~ dose, 
   data = stan_prep_hoescht_dark,
   type = 'continuous',
   fct = drc::LL.4())
 
-#plot_drc_obj$response <- plot_drc_obj$`1`
-
-# keep this
-# newdata.drc <- prepare_ed50s_drc(m.drc, stan_prep_hoescht_dark)
-newdata.drc_2 <- prepare_ed50s_drc_v2(m.drc, stan_prep_hoescht_dark)
+ed50.drc <- prepare_ed50s_drc(m.drc, stan_prep_hoescht_dark)
 ```
 
 ## StanDRC
 
+### Prior estimation
+
 ```{r}
+c_estimate <- coef(m.drc.single)[2]
+d_estimate <- coef(m.drc.single)[3]
+
 slope_test <- stan_prep_hoescht_dark %>% 
   group_by(individual_id) %>% 
   nest() %>% 
@@ -219,73 +209,66 @@ slope_test <- stan_prep_hoescht_dark %>%
   filter(term == 'dose')
 ```
 
+### Model generation + priors
+
 ```{r}
 m.stan <- standrm_harmony(
   formula=response ~ dose, 
   data=stan_prep_hoescht_dark, 
   fct = LL.4(), # slope, lower limit, upper limit, ed50
   curveid= b + e ~ individual_id,
-  standrc_priors(e = "normal(pe, 2)", 
-                 b = "normal(pb, 1)",
-                 pb = slope_test$estimate),
+  standrc_priors(e = "normal(pe, 1)", 
+                 b = "normal(pb, 2)",
+                 pb = slope_test$estimate, 
+                 pc = c_estimate,
+                 pd = d_estimate
+                 ),
   random = b + c + d ~ dir_id,
 iter = 2000, 
 #chains = 4 
   )
 
+# generate ED50 data for each individual
+# functionality currently only for LL.4...
+ed50.stan <- prepare_ed50s_stan(m.stan, stan_prep_hoescht_dark)
+
 m.stan.single <- standrm_harmony(
   formula=response ~ dose, 
-  data=stan_prep_hoescht_dark, fct = L.4(),iter = 2000)
+  data=stan_prep_hoescht_dark, fct = LL.4(),iter = 2000)
+```
+
+
+```{r}
+ed50.stan <- map_do_to_original(ed50.stan,stan_prep_hoescht_dark)  %>%    
+  subset(., select = which(!duplicated(names(.))))
+
+ed50.drc <- map_do_to_original(ed50.drc,stan_prep_hoescht_dark)  %>%    
+  subset(., select = which(!duplicated(names(.))))
+
+dual_ed50_df <- rbind(ed50.drc,ed50.stan)
+# dual_ed50_df <- map_do_to_original(dual_ed50_df,stan_prep_hoescht_dark)
+
+# ggplot_build reverse engineers a ggplot object
 plot_stan <- ggplot_build(plot(m.stan.single))
 
-# keep this
-newdata.stan <- prepare_ed50s_stan(m.stan, stan_prep_hoescht_dark)
-```
-
-```{r}
-# create sample of 10
-
-try({
-  newdata.drc$dose <- NULL
-  newdata.drc_2$dose <- NULL
-  newdata.stan$individual_id <- as.character(newdata.stan$individual_id)
-})
-
-# callan_log_dark
-# id, ed50,pred,group
-
-test <- rbind(newdata.drc,newdata.stan)
-test2 <- rbind(newdata.drc_2,newdata.stan)
-# test <- test   %>%
-#   group_by(individual_id) %>%
-#   sample_n_groups(5)
-```
-
-
-
-```{r}
-
-# test <- test2   %>%
-#   group_by(individual_id) %>%
-#   sample_n_groups(5)
-
-test <- map_do_to_original(test2,stan_prep_hoescht_dark)
+dev.off()
 
 ggplot(data = stan_prep_hoescht_dark,
        aes(x = dose, y = response)) +
   geom_point(col = "grey", size= 0.1 ) + 
-  geom_line(data = plot_stan$data[[3]], aes(x=x,y=y, col="yep"), size= 3) +
+  geom_line(data = plot_stan$data[[3]], aes(x=x,y=y, col="why"), size= 3) +
   geom_smooth(method = drm, aes(col = "drc::L.4"), method.args = list(fct = L.4()), se = F) +
-  geom_point(data = test, aes(
+  geom_point(data = dual_ed50_df, aes(
     x = ed50,
     y = pred,
     color = group
     ), size = 0.7, shape = 3) +
   xlim(-1,10) + 
   # ggrepel::geom_text_repel(data= test, aes(label=individual,x=ed50,y=pred, color=group),size = 2,min.segment.length = 0, segment.color	="black") +
-     ggrepel::geom_label_repel(data = test,
+     ggrepel::geom_label_repel(data = dual_ed50_df,
   aes(
-    x=ed50,y=pred,
+    x=ed50,
+    y=pred,
     # fill = group, 
     label = individual),
   fontface = 'bold', 
@@ -305,19 +288,52 @@ ggplot(data = stan_prep_hoescht_dark,
       override.aes = list(
         linetype = c(1,NA,2,NA)
         ))) + 
-  ggtitle("Hoescht Dark DRC + Stan fit/ed50 estimation")
+  ggtitle("Hoescht Dark DRC + Stan fit/ed50 estimation") +
+   scale_x_log10() #plots out the dataset with the corresponding 4-parameter log-logit dose response curves
 
 ```
 
-## Compare against QTL data
+### Comparative plots
+
 
 ```{r}
+agg_values <- sqldf("select individual,min(response),max(response),median(response) as med_response, avg(response) as avg_response from stan_prep_hoescht_dark group by individual order by avg_response")
 
-```
+long_dual_ed50_df <- base::merge(x = ed50.drc, y = ed50.stan, by = "individual", all = TRUE)
 
-```{r}
-# harmony_collection$saved_models <- list("spm_mito_nucleinumberofobjects" = stan_prep_mito_nucleinumberofobjects, "drc_mito_nucleinumberofobjects" = drc_mito_nucleinumberofobjects)
+# quick remove outliers
+out <- boxplot.stats(long_dual_ed50_df$ed50.x)$out
+out_ind <- which(long_dual_ed50_df$ed50.x %in% c(out))
+subsubdat <- long_dual_ed50_df[-out_ind, ]
 
+agg_w_stan <- merge(x = agg_values, y = ed50.stan, by = "individual", all = TRUE)
 
+agg_w_drc <- merge(x = agg_values, y = subsubdat, by = "individual", all = TRUE)
 
+p_2models <- ggplot() + 
+  geom_point(data = subsubdat,aes(x=ed50.x, y=ed50.y),color='blue', size=0.6) +
+  geom_smooth(data = subsubdat,aes(x=ed50.x, y=ed50.y),method = "lm", se = FALSE) +
+  ggtitle("drc ed50 vs stan ed50 (drc outliers removed)")+
+  xlim(0,5)+ ylim(0,5) + ylab("stan estimate") + xlab("drc estimate")+theme(text=element_text(size=5))
+
+p_drc_meanreponse <- ggplot() + 
+  geom_point(data = agg_w_drc,aes(x=avg_response, y=ed50.x),color='green', size=0.6) +
+  geom_smooth(data = agg_w_drc,aes(x=avg_response, y=ed50.x),method = "lm", se = FALSE) +
+  ggtitle("mean response vs drc ed50") +
+  xlim(0,100)+ ylim(0,5)+theme(text=element_text(size=5))
+
+p_stan_medianresponse <- ggplot() + 
+  geom_point(data = agg_w_stan,aes(x=avg_response, y=ed50),color='red', size=0.6) +
+  geom_smooth(data = agg_w_stan,aes(x=avg_response, y=ed50),method = "lm", se = FALSE) +
+  ggtitle("mean response vs stan ed50") +
+  xlim(0,100)+ ylim(0,5)+theme(text=element_text(size=5))
+
+p_stan_meanresponse <- ggplot() + 
+  geom_point(data = agg_w_stan,aes(x=med_response, y=ed50),color='red', size=0.6) +
+  geom_smooth(data = agg_w_stan,aes(x=med_response, y=ed50), method = "lm", se = FALSE) +
+  ggtitle("median response vs stan ed50") +
+  xlim(0,100)+ ylim(0,5)+theme(text=element_text(size=5))
+
+# plot 4
+ggarrange(p_2models, p_drc_meanreponse, p_stan_medianresponse, p_stan_meanresponse, ncol = 2, nrow = 2)
 ```
