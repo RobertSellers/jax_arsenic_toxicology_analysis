@@ -11,6 +11,11 @@ data/discovery_invivo*
 data/omics/*
 # data/omics/.gitkeep
 
+data/invivo/*
+
+# transfers from box
+data/analyses
+
 data/validation/*
 # data/validation/.gitkeep
 
