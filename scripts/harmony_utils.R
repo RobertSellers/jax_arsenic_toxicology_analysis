@@ -1,4 +1,139 @@
 
+# this script generates a 4 component harmony_collection class
+# requires dplyr, readr, checkmate, plyr, janitor packages
+require(dplyr)
+
+# primary function
+harmony_create_collection <- function(
+  dir, 
+  overwrite = FALSE, 
+  temp_dir = NA,
+  custom_rename = FALSE
+  ){
+  options(readr.num_columns = 0)
+  # data cache handling
+  # incomplete - need parameter for overwrite
+  dir_name <- unlist(strsplit(dir, "/"))[length(unlist(strsplit(dir, "/")))]
+  temp_data_storage <- paste0(temp_dir,"/",dir_name,'.RData')
+  # look for r data
+  if (file.exists(temp_data_storage) && overwrite == FALSE){
+    cat(paste0("\nLoading existing plate collection from temp_files"))
+    plate_collection <- readRDS(temp_data_storage)
+  } else { 
+    start.time <- Sys.time()
+    
+    if (!dir.exists(dir)){
+      stop("directory parameter not found")
+    }
+    
+    # comprehensive plate list
+    temp_list <- list()
+    i <- 1 # for progress 
+    child_dir <- list.dirs(path = dir, full.names = TRUE, recursive = FALSE)
+    # construct load list
+    # takes last evaluation found
+    for (child in child_dir){
+
+      # file naming / loop through available evaluations
+      evaluations <- list.dirs(path = child, full.names = TRUE, recursive = TRUE)
+      file_list <- unlist(strsplit(evaluations[length(sort(evaluations))], "/"))
+      child_name <- unlist(strsplit(child, "/"))[length(unlist(strsplit(child, "/")))]
+      e <- as.character(sub('.*(?=.{1}$)', '',file_list[length(file_list)], perl=T))
+      plate_obj_name <- paste0("d",sub(" ", "_", gsub('\\-', '',sub("/","__",child_name))),"_e",e)
+      
+      cur_path <- file.path(dir,file_list[length(file_list)-1])
+      
+      ###### INDEX FILE#######
+      idx_df <- data.frame()
+      try({
+        index_file <- file.path(cur_path, "indexfile.txt")
+        if(file.exists(index_file)){
+          idx_df <- readr::read_tsv(index_file, progress = readr::show_progress()) %>%
+            select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
+            janitor::clean_names() %>% # removes spaces and bad characters for underscores
+            mutate(channel_name = tolower(gsub("[[:punct:][:blank:]]", "_", channel_name)),
+                   dir = plate_obj_name)
+          
+          # split dataframes based on stain value
+          #idx_df_split <- split(idx_df, idx_df$channel_name)
+        }
+        else{
+          #nothing right now
+          warning('Index data not loaded')
+        }
+      })
+      
+      # ###### PLATE FILE#######
+      plate_df <- data.frame()
+      try({
+        plate_file <- file.path(cur_path, paste0("Evaluation", e), "PlateResults.txt")
+        
+        if(file.exists(plate_file)){
+          
+          # handle metadata for plate header
+          plate_header_raw <- readLines(plate_file,n = 8)
+          split_header <- strsplit(plate_header_raw, split="\t")
+          metadata_df <- as.data.frame(t(do.call(rbind,split_header[c(1:6)]))) %>%
+            janitor::row_to_names(row_number = 1)
+          
+          plate_df <- readr::read_tsv(plate_file,skip=8) %>%
+            select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
+            janitor::clean_names() %>%# removes spaces and bad characters for underscores
+            mutate(dir = plate_obj_name)
+          
+        }else{
+          warning('Plate data not loaded')
+        }
+      })
+      
+      # ###### CELLS FILE#######
+      cell_df <- data.frame()
+      try({
+        cells_file <- list.files(file.path(cur_path, paste0("Evaluation", e)), full.names = TRUE, pattern = "Objects_Population")[1]
+        if(file.exists(cells_file)){
+          
+          # read file header
+          cells_header_raw <- readLines(cells_file, n = 9)
+          split_header <- strsplit(cells_header_raw, split="\t")
+          metadata_df <- as.data.frame(t(do.call(rbind,split_header[c(1:6)]))) %>%
+            janitor::row_to_names(row_number = 1)
+          # read file data
+          cell_df <- readr::read_tsv(cells_file,skip=9) %>%
+            select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
+            janitor::clean_names() %>%# removes spaces and bad characters for underscores
+            mutate(plate_obj_name = plate_obj_name)
+          
+        }else{
+          warning('Cells data not loaded')
+          cells_header <- ''
+          cell_df <- data.frame()
+        }
+      })
+
+      new_plate_class <- plate_class(idx_df, plate_df, cell_df, metadata_df, dir)
+      # add plate object to list
+      len_list <- length(temp_list) + 1
+      temp_list[[plate_obj_name]] <- new_plate_class
+    }
+    # analyze features and add to plate collection parameter class
+    plate_collection <- plate_collection_class(temp_list, custom_rename)
+    
+    end.time <- Sys.time()
+    time.taken <- round(end.time - start.time,2)
+    print(time.taken)
+    cat(paste0("\nSaving plate collection to temp_files"))
+    tryCatch(
+      expr = {
+        saveRDS(plate_collection, paste0(temp_dir,"/",dir_name,'.RData'))
+      },
+      error = function(e){ 
+        cat(paste("error - temp_dir not found / unsaved"))
+      }
+    )
+  }
+  return (plate_collection)
+}
+
 plate_class <- function(index, plate_df, cells_df, plate_metadata, plate_dir){
 
   structure(class = "plate", list(
@@ -18,10 +153,13 @@ plate_class <- function(index, plate_df, cells_df, plate_metadata, plate_dir){
 
 # defining s3
 # consult with http://adv-r.had.co.nz/OO-essentials.html if necessary
-plate_collection_class <- function(list_of_plates){
+plate_collection_class <- function(list_of_plates, custom_rename){
   
   self.all_plates = do.call(plyr::rbind.fill, lapply(list_of_plates, function(x) {x$plate_df}))
-  self.all_plates = colname_condense(self.all_plates) # bulk rename function
+  
+  # bulk rename function as input parameter
+  if (custom_rename) self.all_plates = colname_condense(self.all_plates)
+  
   self.index = do.call(plyr::rbind.fill, lapply(list_of_plates, function(x) {x$index}))
   self.all_cells = do.call(plyr::rbind.fill, lapply(list_of_plates, function(x) {x$cells_df}))
   self.feature_df = feature_columns_analyze(self.all_plates)
@@ -36,7 +174,7 @@ plate_collection_class <- function(list_of_plates){
   ))
 }
 
-# Generic Methods for quality assurance
+# s3 / methods
 harmony_qa <- function(x) UseMethod("harmony_qa")
 harmony_qa.plate_collection <- function(x) {
   print("Analyzing all_plates")
@@ -55,7 +193,6 @@ harmony_qa.plate_collection <- function(x) {
   }
 }
 
-# let's custamize the summary, for example
 # uses generic s3 base summary function
 # consider upgrading to lexical scoping - see https://rpubs.com/mrloh/oor example
 summary.plate <- function(obj){
@@ -73,126 +210,12 @@ summary.plate_collection <- function(obj){
   sum(obj$all_plates$out_focus_number_of_objects,na.rm = TRUE),"\n")
 }
 
-harmony_create_collection <- function(dir, overwrite = FALSE){
-  options(readr.num_columns = 0)
-  # data cache handling
-  # incomplete - need parameter for overwrite
-  temp_data_storage <- paste0("../../temp_files/",dir,'.RData')
-
-    # look for r data
-    if (file.exists(temp_data_storage) && overwrite == FALSE){
-      cat(paste0("\nLoading existing plate collection from temp_files"))
-      plate_collection <- readRDS(temp_data_storage)
-    } else { 
-        start.time <- Sys.time()
-
-        if (!dir.exists(dir)){
-          stop("directory parameter not found")
-        }
-        
-        # comprehensive plate list
-        temp_list <- list()
-        i <- 1 # for progress 
-        child_dir <- list.dirs(path = dir, full.names = TRUE, recursive = FALSE)
-        # construct load list
-        # takes last evaluation found
-        for (child in child_dir){
-          
-          # file naming / loop through available evaluations
-          evaluations <- list.dirs(path = child, full.names = TRUE, recursive = TRUE)
-          file_list <- unlist(strsplit(evaluations, "/"))
-          e <- as.character(sub('.*(?=.{1}$)', '',file_list[7], perl=T))
-          plate_obj_name <- paste0('d',sub(" ", "_", gsub('\\-', '',sub("/","__",paste0(file_list[3])))),"_e",e)
-          
-          cur_path <- file.path(dir,file_list[3])
-          
-          ###### INDEX FILE#######
-          idx_df <- data.frame()
-          try({
-            index_file <- file.path(cur_path, "indexfile.txt")
-            if(file.exists(index_file)){
-              idx_df <- read_tsv(index_file, progress = show_progress()) %>%
-                select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-                janitor::clean_names() %>% # removes spaces and bad characters for underscores
-                mutate(channel_name = tolower(gsub("[[:punct:][:blank:]]", "_", channel_name)),
-                      dir = plate_obj_name)
-              
-              # split dataframes based on stain value
-              #idx_df_split <- split(idx_df, idx_df$channel_name)
-              }
-              else{
-            #nothing right now
-            warning('Index data not loaded')
-            }
-          })
-          
-          
-          # ###### PLATE FILE#######
-          plate_df <- data.frame()
-          try({
-            plate_file <- file.path(cur_path, paste0("Evaluation", e), "PlateResults.txt")
-            
-            if(file.exists(plate_file)){
-              
-              # handle metadata for plate header
-              plate_header_raw <- readLines(plate_file,n = 8)
-              split_header <- strsplit(plate_header_raw, split="\t")
-              metadata_df <- as.data.frame(t(do.call(rbind,split_header[c(1:6)]))) %>%
-                row_to_names(row_number = 1)
-              
-              plate_df <- read_tsv(plate_file,skip=8) %>%
-                select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-                janitor::clean_names() %>%# removes spaces and bad characters for underscores
-                mutate(dir = plate_obj_name)
-              plate_df[is.nan(plate_df)] <- NA #change NaN to NA
-              
-            }else{
-              warning('Plate data not loaded')
-            }
-          })
-          
-          # ###### CELLS FILE#######
-          cell_df <- data.frame()
-          try({
-            cells_file <- list.files(file.path(cur_path, paste0("Evaluation", e)), full.names = TRUE, pattern = "Objects_Population")[1]
-            if(file.exists(cells_file)){
-              
-              # read file header
-              cells_header_raw <- readLines(cells_file, n = 9)
-              split_header <- strsplit(cells_header_raw, split="\t")
-              metadata_df <- as.data.frame(t(do.call(rbind,split_header[c(1:6)]))) %>%
-                row_to_names(row_number = 1)
-              # read file data
-              cell_df <- read_tsv(cells_file,skip=9) %>%
-                select_if(function(x) any(!is.na(x))) %>% # removes columns with all NA
-                janitor::clean_names() %>%# removes spaces and bad characters for underscores
-                mutate(plate_obj_name = plate_obj_name)
-              
-            }else{
-              warning('Cells data not loaded')
-              cells_header <- ''
-              cell_df <- data.frame()
-            }
-          })
-          new_plate_class <- plate_class(idx_df, plate_df, cell_df, metadata_df, dir)
-          # add plate object to list
-          len_list <- length(temp_list) + 1
-          temp_list[[plate_obj_name]] <- new_plate_class
-        }
-        # analyze features and add to plate collection parameter class
-        plate_collection <- plate_collection_class(temp_list)
-        
-        end.time <- Sys.time()
-        time.taken <- round(end.time - start.time,2)
-        print(time.taken)
-        cat(paste0("\nSaving plate collection to temp_files"))
-        saveRDS(plate_collection, temp_data_storage)
-    }
-    return (plate_collection)
-}
-
+# construction of summary stats per feature
+# these aren't observable upon edits to the plate_df data
 feature_columns_analyze <- function(df){
-  features_df <- NULL
+
+    features_df <- NULL
+  # the data expects these two columns
   start_idx = grep("timepoint", colnames(df)) + 1
   end_idx = grep("number_of_analyzed_fields", colnames(df)) - 1
   for (feature in colnames(df[,start_idx:end_idx])){
@@ -207,9 +230,8 @@ feature_columns_analyze <- function(df){
     median_ <- signif(as.numeric(median(f,na.rm=TRUE)), 3)
     max_ <- signif(as.numeric(max(f,na.rm=TRUE)), 3)
     min_ <- signif(as.numeric(min(f,na.rm=TRUE)), 3)
-    integer_ <- testInteger(f) 
+    integer_ <- checkmate::testInteger(f) 
 
-    
     features_df <- rbind(features_df, data.frame(
       name_,
       integer_,
@@ -223,7 +245,8 @@ feature_columns_analyze <- function(df){
   return (features_df)
 }
 
-
+# clean up column names
+# this is a unique circumstance
 colname_condense <- function(df){
   df <- df %>%
     rename_at(.vars = vars(ends_with("_per_well")),
@@ -267,46 +290,4 @@ query_features <- function(data){
   end_idx = grep("number_of_analyzed_fields", colnames(data)) - 1
   all_features <- colnames(data[,start_idx:end_idx])
   return(all_features)
-}
-
-# adds binary field for plotting and pairing
-# very slow -- could use update
-iterate_bin_id <- function(df){
-  df <- df %>%
-    add_column(bin_id = NA)
-  for (i in 1:nrow(df)){
-    if (i != 1){
-      if (df[i,]$dir == df[i-1,]$dir){
-        df[i,]$bin_id <- df[i-1,]$bin_id
-      }else{
-        if(df[i-1,]$bin_id == 1){
-          df[i,]$bin_id <- 0
-        }else{
-          df[i,]$bin_id <- 1
-        }
-      }
-    }else{
-      df[i,]$bin_id <- 1
-    }
-  }
-  df$bin_id <- as.character(df$bin_id)
-  return (df)
-}
-
-prepare_data_for_stan <- function(ft, dat, log_ = FALSE, scale_ = TRUE){
-  dat$response <- as.numeric(unlist(dat[,c(ft)]))
-  dat <- dat[!is.na(dat$response), ] 
-  if (log_) {
-      dat$response <- log(dat$response)
-  }
-  if (scale_){
-    dat[is.na(dat) | dat == Inf | dat == -Inf] <- NA 
-    dat <- dat[!is.na(dat$response), ] 
-    dat$response <- scales::rescale(dat$response, 
-                                    to = c(0.01,100), 
-                                    from = range(dat$response), 
-                                    na.rm = TRUE, 
-                                    finite = TRUE)
-  }
-  return(dat)
 }

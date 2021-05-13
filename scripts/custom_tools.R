@@ -207,22 +207,63 @@ log_skew_transform <- function(response_var) {
   return(response_var)
 }
 
-
-boxplot_pairs <- function(filename, y, data){
-  pdf(file = filename, height = 10, width = 10)
+# QA function to generate a faceted boxplot per each plate pair
+boxplot_pairs <- function(y, data, filename = NA){
+  require(ggplot2)
+  
+  small_font_theme <- ggplot2::theme(
+    axis.text.x = element_text(colour="grey20", size=6, angle=90, hjust=.5, vjust=.5),
+    axis.text.y = element_text(colour="grey20", size=6),
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 5)
+  )
+  if(!is.na(filename)){
+    pdf(file = filename, height = 10, width = 10)
+  }
   p <- ggplot(data) +
     theme(legend.position = "none") +
-    geom_boxplot( aes_string(x = "individual", y = y, colour = "bin_id"), show.legend = FALSE,outlier.size = -1) +
+    geom_boxplot(aes_string(x = "individual", y = y, colour = "bin_id"), 
+    show.legend = FALSE,
+    outlier.size = -1) +
     ylab(y) 
   # browser()
   fr <- p +
     facet_wrap(~group_pair, scales = "free_x", 
-               labeller = labeller(group_pair = label_facet(data$group_pair, "paired"))) +
+      labeller = labeller(group_pair = label_facet(data$group_pair, "paired"))
+    ) +
     small_font_theme
-  print(fr)
-  dev.off()
+  if(!is.na(filename)){
+    print(fr)
+    dev.off()
+  }else{
+    fr
+  }
 }
 
 group.center <- function(var,grp) {
   return(var-tapply(var,grp,mean,na.rm=T)[grp])
+}
+
+# adds binary field for plotting and pairing
+# very slow -- could use update
+iterate_bin_id <- function(df){
+  df <- df %>%
+    tibble::add_column(bin_id = NA)
+  for (i in 1:nrow(df)){
+    if (i != 1){
+      if (df[i,]$dir == df[i-1,]$dir){
+        df[i,]$bin_id <- df[i-1,]$bin_id
+      }else{
+        if(df[i-1,]$bin_id == 1){
+          df[i,]$bin_id <- 0
+        }else{
+          df[i,]$bin_id <- 1
+        }
+      }
+    }else{
+      df[i,]$bin_id <- 1
+    }
+  }
+  df$bin_id <- as.character(df$bin_id)
+  return (df)
 }
