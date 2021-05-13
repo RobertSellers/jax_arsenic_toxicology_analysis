@@ -1,0 +1,230 @@
+---
+title: "Stage 1 DO Harmony Initial Data Load"
+author:
+- name: Robert Sellers
+  affiliation: The Jackson Laboratory
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
+abstract: |
+latex_engine: pdflatex
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    number_sections: true
+    theme: lumen
+    toc: yes
+    toc_float: yes
+    df_print: paged
+    # code_folding: "hide"
+  pdf_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pyments
+    keep_tex: yes
+    latex_engine: xelatex
+    number_sections: no
+    toc: no
+    
+---
+
+Process explained:
+ - this loads a "raw" bound object of 96 well plates for a singular experiment, as distinguished by a folder containing respective each harmony output per plate. 
+ - the resulting datafile/object is a modified object containing the initial 'raw' load + custom corrections relating to errors, file renaming, updates and asserting the correct experimental design.
+
+# Environment
+
+- Point your working directory to the project root folder
+
+```{r message=FALSE}
+# env
+setwd('~/Desktop/projects/jax_arsenic_toxicology_analysis/')
+options(scipen = 999) # suppress sci notation
+# contains harmony plate collection class builder
+source("scripts/harmony_utils.R")
+# warehouse for functions
+source("scripts/custom_tools.R") 
+require(dplyr)
+```
+
+# Data
+
+## Direct load from .rdata or .csv
+
+- Use this if not working with Harmony software data or development.
+
+```{r}
+harmony_collection <- readRDS('./harmony_do_focus.RData')
+analytics_csv <- read.csv('./harmony_do_focus_reduced.csv')
+```
+
+## Harmony_collection build (if applicable)
+
+__The next two code blocks are optional / not knitted. This utility is a development tool.__
+
+### Build collection from raw option
+
+- The following code block is set to eval=FALSE
+- overwrite = TRUE builds a temp .rds file (e.g. temp_files/do_focus_merge_2.rds) from raw harmony data.
+
+```{r warning=FALSE, eval=FALSE}
+# point to parent data directory
+selected_dir <- "data/invitro/harmony_do_focus"
+# Warning - this logic expects a ./temp_files data dir for caching
+# Set overwrite to TRUE when underlying data dir has been changed
+harmony_collection <- harmony_create_collection(dir = selected_dir, 
+                                                overwrite = TRUE,
+                                                temp_dir = "./temp_files")
+```
+
+### Load collection from cache
+
+- The following code block is set to eval=FALSE
+- overwrite = FALSE loads data from the selected_dir directory parameter. 
+
+```{r warning=FALSE, eval=FALSE}
+# point to parent data directory
+selected_dir <- "data/invitro/harmony_do_focus"
+# Warning - this currently expects a temp_files data dir 
+# Set overwrite to TRUE when underlying data dir has been changed
+harmony_collection <- harmony_create_collection(dir = selected_dir, 
+                                                overwrite = FALSE,
+                                                temp_dir = "./temp_files")
+```
+
+# Custom changes to data
+
+## Update logic
+
+- Data is added to the collection as [dir]_v2
+
+```{r}
+# potentially universal updates for class creator
+harmony_collection$all_plates_v2 <- harmony_collection$all_plates %>% 
+  dplyr::rename(dose = concentration,
+                ) %>%
+  tibble::add_column(sex = NA, .after="individual") %>%
+  dplyr::mutate(mouse = paste0(gsub('_','.',individual),"_", plate)) %>%
+  dplyr::select(plate, row, column, dose, sex, individual, mouse, dplyr::everything())
+
+# delete from dC20264_B1__20200928T12_28_55Measurement_1_e5 (Z)
+# where rows are 6:8 and column is 9
+# delete from dC20255_B2__20200926T13_00_37Measurement_2_e6 (Y)
+# where rows are 1:6 and column is 10
+
+# this needs a better standard / naming convention prior to analysis
+excludes <- read.csv(text = "
+dir,row,column
+dC20264_B1__20200928T12_28_55Measurement_1_e5,6,9
+dC20264_B1__20200928T12_28_55Measurement_1_e5,7,9
+dC20264_B1__20200928T12_28_55Measurement_1_e5,8,9
+dC20255_B2__20200926T13_00_37Measurement_2_e6,1,10
+dC20255_B2__20200926T13_00_37Measurement_2_e6,2,10
+dC20255_B2__20200926T13_00_37Measurement_2_e6,3,10
+dC20255_B2__20200926T13_00_37Measurement_2_e6,4,10
+dC20255_B2__20200926T13_00_37Measurement_2_e6,5,10
+dC20255_B2__20200926T13_00_37Measurement_2_e6,6,10
+")
+
+harmony_collection$all_plates_v2 <- dplyr::anti_join(harmony_collection$all_plates_v2, excludes)
+
+# unique data cleaning
+harmony_collection$all_plates_v2 <- harmony_collection$all_plates_v2 %>% 
+  filter(
+  dose != 0.5, 
+  individual != '11_20',
+  individual != '5346') %>%
+  # incorrect pairs
+  mutate(plate=ifelse((dir=='dC20222_B2_rerun__20200829T11_01_59Measurement_4_e9'), 'B2', plate)) %>%
+  mutate(plate=ifelse((dir=='d20222_B1_Cal__20200825T12_23_59Measurement_3_e6'), 'B1', plate)) %>%
+  mutate(plate=ifelse((dir=='d20223_B2_Cal__20200817T11_02_00Measurement_1_e9'), 'A2', plate)) %>%
+  mutate(plate=ifelse((dir=='d20223_A1_Cal__20200817T17_03_14Measurement_2_e7'), 'A1', plate)) %>%
+  mutate(plate=ifelse((dir=='d20223_A2_Cal__20200818T14_54_58Measurement_1_e6'), 'B2', plate)) %>%
+  mutate(plate=ifelse((dir=='d20223_B1_Cal__20200827T10_48_20Measurement_1_e7'), 'B1', plate)) %>%
+  # incomplete pairs / ensuring completion of plate column
+  mutate(plate=ifelse((dir=='dC20236_B2__20200828T14_45_19Measurement_1_e8'), 'B2', plate)) %>%
+  mutate(plate=ifelse((dir=='dC20255_B1__20200925T14_41_51Measurement_5_e6'), 'B1', plate)) %>%
+  mutate(plate=ifelse((dir=='dC20255_B2__20200926T13_00_37Measurement_2_e6'), 'B2', plate)) %>%
+  mutate(plate=ifelse((dir=='dC20236_B1__20200828T13_12_27Measurement_1_e7'), 'B1', plate)) %>%
+  mutate(plate=ifelse((dir=='dC20255_B2_last3columns__20200928T09_33_41Measurement_1_e7'), 'B2', plate)) %>%
+  mutate(plate=ifelse((dir=='dC20264_B1__20200928T12_28_55Measurement_1_e5'), 'B1', plate)) %>%
+  mutate(plate=ifelse((dir=='dW20267_A1__20201002T10_37_07Measurement_1_e5'), 'A1', plate)) %>%
+  mutate(plate=ifelse((dir=='dW20267_A2__20201004T15_35_00Measurement_1_e5'), 'A2', plate)) %>%
+  mutate(plate=ifelse((dir=='dW20267_B1__20201004T12_18_54Measurement_2_e5'), 'B1', plate)) %>%
+  mutate(plate=ifelse((dir=='dW20267_B2__20201002T12_32_44Measurement_2_e5'), 'B2', plate)) %>%
+  mutate(dir=ifelse((dir=='dC20255_B2_last3columns__20200928T09_33_41Measurement_1_e7'), 'dC20255_B2__20200926T13_00_37Measurement_2_e6', dir)) %>%
+  mutate(dir=ifelse((dir=='dC20264_B1_last3__20200928T13_26_45Measurement_1_e5'), 'dC20264_B1__20200928T12_28_55Measurement_1_e5', dir)) %>%
+  # hardcode mapped replicates to paired IDs
+  # this throws an error
+  mutate(group_pair = LETTERS702[group_indices(., substr(plate,1,1), sub("\\_.*", "", dir))]) %>%
+  mutate(
+    fdose = factor(dose),
+    fdir = factor(dir)
+    )
+```
+
+## Notes on changes
+
+- group_pairs with missing / removed well data
+  - B (Individual 1882 instrument malfunction at corner of plate)
+  - O (Individual 11_20 removed)
+  - W (Individual 5346 removed due to naming error; data split between runs)
+  - Y (Individual 5346 removed due to naming error; Individual 2213 instrument malfunction at corner of plate; Data split between runs)
+  - Z (Data split between runs)
+
+## Additional new columns
+
+```{r}
+# integer bin_id logic
+# binary integer ID per plate pair (zero or 1)
+# this is slow / inefficient
+harmony_collection$all_plates_v2 <- iterate_bin_id(harmony_collection$all_plates_v2)
+```
+
+## Quick tables / plots
+
+### Counts per feature
+
+```{r}
+table(harmony_collection$all_plates_v2$group_pair, harmony_collection$all_plates_v2$bin_id)
+```
+
+### Paired plot on example feature
+
+```{r, fig.width=10, fig.height=10}
+boxplot_pairs(y ='infocus_nucleus_hoechst_ser_hole_1px_mean',
+              data = harmony_collection$all_plates_v2,
+              filename = NA)
+```
+
+# Saves
+
+```{r}
+# save over .rdata
+saveRDS(harmony_collection, './harmony_do_focus.RData')
+```
+
+```{r}
+# save corresponding .csv
+# currently analyzing the following features
+selected_features <- c(
+  "multi_nucleated_cells_numberofobjects", 
+  "nuclei_numberofobjects", 
+  "infocus_intensity_cell_hoechst_mean_mean", 
+  "infocus_nucleus_hoechst_ser_dark_1px_mean", 
+  "infocus_nucleus_hoechst_ser_edge_1px_mean", 
+  "infocus_nucleus_hoechst_ser_hole_1px_mean",
+  "infocus_cell_area_mm2_mean",
+  "infocus_cell_mitotrackerdeepred_ser_dark_1px_mean", 
+  "infocus_cell_mitotrackerdeepred_ser_edge_1px_mean", 
+  "infocus_intensity_cell_mitotrackerdeepred_mean_mean" 
+  )
+```
+
+```{r}
+summary(harmony_collection$all_plates_v2[,
+     c("dir","row","column","dose","individual","mouse",
+       selected_features)])
+write.csv(harmony_collection$all_plates_v2[,
+     c("dir","row","column","dose","individual","mouse",
+       selected_features)], './harmony_do_focus_reduced.csv')
+```
