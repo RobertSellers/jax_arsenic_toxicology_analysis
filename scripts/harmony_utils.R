@@ -214,7 +214,7 @@ summary.plate_collection <- function(obj){
 # these aren't observable upon edits to the plate_df data
 feature_columns_analyze <- function(df){
 
-    features_df <- NULL
+  features_df <- NULL
   # the data expects these two columns
   start_idx = grep("timepoint", colnames(df)) + 1
   end_idx = grep("number_of_analyzed_fields", colnames(df)) - 1

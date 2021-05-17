@@ -26,23 +26,6 @@ remove_sd_vars <- function(data){
 
 impute.mean <- function(x) replace(x, is.na(x), mean(x, na.rm = TRUE))
 
-# see http://rstudio-pubs-static.s3.amazonaws.com/1563_1ae2544c0e324b9bb7f6e63cf8f9e098.html
-# log_skew_transform <- function(response_var = 'response') {
-#   skew_val <- e1071::skewness(response_var)
-#   skew.score <- function(c, x)
-#     (e1071::skewness(log(x + c))) ^ 2
-#   if (!is.na(skew_val)) {
-#     print(paste0("performing log transformation with skew:", skew_val))
-#     best.c <- optimise(skew.score, c(0, 20), x = response_var)$minimum
-#     response_var <- log(response_var + best.c)
-#   } else{
-#     print("No optimization possible")
-#     # to be continued
-#     #df$response <- log(df$response)
-#   }
-#   return(response_var)
-# }
-
 # ensure all NA values are the same
 is.nan.data.frame <- function(x){
   do.call(cbind, lapply(x, is.nan))
@@ -266,4 +249,61 @@ iterate_bin_id <- function(df){
   }
   df$bin_id <- as.character(df$bin_id)
   return (df)
+}
+
+# batch correction lme4 auto script
+batch_correct <- function(formula_,feature, data, r.eff, target_col, debug = FALSE){
+  require(lme4)
+  if (debug) browser()
+  pheno_raw <- as.numeric(unlist(data[,c(feature)]))
+  mn.pheno <- mean(pheno_raw, na.rm=TRUE)
+  sd.pheno <- sd(pheno_raw, na.rm=TRUE)
+  data$pheno <- (pheno_raw - mn.pheno) / sd.pheno
+  fit <- lmer(formula_, data, REML=FALSE)
+  random_effects <- ranef(fit)
+  effects <- random_effects[[r.eff]]
+  batch.ef <- effects[as.character(data[,c(target_col)][[1]]),]
+  pheno_sub <- data$pheno - batch.ef
+  pheno_adj <- (sd.pheno * pheno_sub) + mn.pheno
+  return (pheno_adj)
+}
+colname_condense <- function(df){
+  df <- df %>%
+    rename_at(.vars = vars(ends_with("_per_well")),
+              .funs = funs(sub("[_]per_well$", "", .))) %>%
+    rename_at(.vars = vars(ends_with("_cells_cells")),
+              .funs = funs(sub("[_]cells_cells$", "cells", .))) %>%
+    rename_at(.vars = vars(contains("1_px")),
+              .funs = funs(sub("1_px", "1px", .))) %>%
+    rename_at(.vars = vars(contains("hoechst_33342")),
+            .funs = funs(sub("hoechst_33342", "hoechst", .))) %>%
+    rename_at(.vars = vars(contains("alexa_488")),
+            .funs = funs(sub("alexa_488", "alexa488", .))) %>%
+    rename_at(.vars = vars(contains("mito_tracker_deep_red")),
+            .funs = funs(sub("mito_tracker_deep_red", "mitotrackerdeepred", .))) %>%
+    rename_at(.vars = vars(contains("_number_of_objects")),
+              .funs = funs(sub("_number_of_objects", "_numberofobjects", .))) %>%
+    rename_at(.vars = vars(contains("std_dev")),
+            .funs = funs(sub("std_dev", "stdev", .))) %>%
+    rename_at(.vars = vars(contains("_pos_")),
+            .funs = funs(sub("[_]pos[_]", "_positive_", .))) %>%
+    rename_at(.vars = vars(contains("_neg_")),
+            .funs = funs(sub("[_]neg[_]", "_negative_", .))) %>%
+    rename_at(.vars = vars(contains("out_focus")),
+            .funs = funs(sub("out_focus", "outfocus", .))) %>%
+    rename_at(.vars = vars(contains("in_focus")),
+          .funs = funs(sub("in_focus", "infocus", .))) %>%
+    rename_at(.vars = vars(contains("number_of_spots")),
+        .funs = funs(sub("number_of_spots", "numberofspots", .))) %>%
+    rename_at(.vars = vars(contains("h2ax_positive")),
+        .funs = funs(sub("h2ax_positive", "h2axpositive", .))) %>%
+    rename_at(.vars = vars(contains("h2ax_negative")),
+        .funs = funs(sub("h2ax_negative", "h2axnegative", .))) %>%
+    distinct()
+  return (df)
+}
+
+wrapit <- function(text) {
+  wtext <- paste(strwrap(text,width=40),collapse=" \n ")
+  return(wtext)
 }

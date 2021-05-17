@@ -27,9 +27,20 @@ output:
     
 ---
 
-Process explained:
- - this loads a "raw" bound object of 96 well plates for a singular experiment, as distinguished by a folder containing respective each harmony output per plate. 
- - the resulting datafile/object is a modified object containing the initial 'raw' load + custom corrections relating to errors, file renaming, updates and asserting the correct experimental design.
+Document/Process explained:
+
+* The following loads a "raw" bound object of all 96 well plates for an experiment. This data is available elsewhere as _do_focus_merge_2_ for raw and metadata .csv / .tsv files.
+
+* The resulting object list contains both the loaded data __all_plates__ with __all_plates_clean__ data.frames.
+
+* A subset of curated features is also constructed / referenced as 'harmony_do_focus_reduced.csv'.
+
+* these objects can be simply loaded as follows: 
+  
+```{r eval = FALSE}
+harmony_collection <- readRDS('./harmony_do_focus.RData')
+analytics_csv <- read.csv('./harmony_do_focus_reduced.csv')
+```
 
 # Environment
 
@@ -71,9 +82,10 @@ __The next two code blocks are optional / not knitted. This utility is a develop
 selected_dir <- "data/invitro/harmony_do_focus"
 # Warning - this logic expects a ./temp_files data dir for caching
 # Set overwrite to TRUE when underlying data dir has been changed
-harmony_collection <- harmony_create_collection(dir = selected_dir, 
+harmony_collection <- harmony_create_collection(dir = selected_dir,
                                                 overwrite = TRUE,
-                                                temp_dir = "./temp_files")
+                                                temp_dir = "./temp_files",
+                                                custom_rename = FALSE)
 ```
 
 ### Load collection from cache
@@ -88,20 +100,20 @@ selected_dir <- "data/invitro/harmony_do_focus"
 # Set overwrite to TRUE when underlying data dir has been changed
 harmony_collection <- harmony_create_collection(dir = selected_dir, 
                                                 overwrite = FALSE,
-                                                temp_dir = "./temp_files")
+                                                temp_dir = "./temp_files",
+                                                custom_rename = FALSE)
 ```
 
 # Custom changes to data
 
 ## Update logic
 
-- Data is added to the collection as [dir]_v2
+- Revised data is then added to the collection as harmony_collection$all_plates_clean
 
 ```{r}
 # potentially universal updates for class creator
-harmony_collection$all_plates_v2 <- harmony_collection$all_plates %>% 
-  dplyr::rename(dose = concentration,
-                ) %>%
+harmony_collection$all_plates_clean <- harmony_collection$all_plates %>% 
+  dplyr::rename(dose = concentration) %>%
   tibble::add_column(sex = NA, .after="individual") %>%
   dplyr::mutate(mouse = paste0(gsub('_','.',individual),"_", plate)) %>%
   dplyr::select(plate, row, column, dose, sex, individual, mouse, dplyr::everything())
@@ -125,10 +137,10 @@ dC20255_B2__20200926T13_00_37Measurement_2_e6,5,10
 dC20255_B2__20200926T13_00_37Measurement_2_e6,6,10
 ")
 
-harmony_collection$all_plates_v2 <- dplyr::anti_join(harmony_collection$all_plates_v2, excludes)
+harmony_collection$all_plates_clean <- dplyr::anti_join(harmony_collection$all_plates_clean, excludes)
 
 # unique data cleaning
-harmony_collection$all_plates_v2 <- harmony_collection$all_plates_v2 %>% 
+harmony_collection$all_plates_clean <- harmony_collection$all_plates_clean %>% 
   filter(
   dose != 0.5, 
   individual != '11_20',
@@ -173,11 +185,13 @@ harmony_collection$all_plates_v2 <- harmony_collection$all_plates_v2 %>%
 
 ## Additional new columns
 
+- this is needed for some subsequent plotting
+
 ```{r}
 # integer bin_id logic
 # binary integer ID per plate pair (zero or 1)
 # this is slow / inefficient
-harmony_collection$all_plates_v2 <- iterate_bin_id(harmony_collection$all_plates_v2)
+harmony_collection$all_plates_clean <- iterate_bin_id(harmony_collection$all_plates_clean)
 ```
 
 ## Quick tables / plots
@@ -185,14 +199,14 @@ harmony_collection$all_plates_v2 <- iterate_bin_id(harmony_collection$all_plates
 ### Counts per feature
 
 ```{r}
-table(harmony_collection$all_plates_v2$group_pair, harmony_collection$all_plates_v2$bin_id)
+table(harmony_collection$all_plates_clean$group_pair, harmony_collection$all_plates_clean$bin_id)
 ```
 
 ### Paired plot on example feature
 
 ```{r, fig.width=10, fig.height=10}
-boxplot_pairs(y ='infocus_nucleus_hoechst_ser_hole_1px_mean',
-              data = harmony_collection$all_plates_v2,
+boxplot_pairs(y ='in_focus_nucleus_hoechst_33342_ser_hole_1_px_mean_per_well',
+              data = harmony_collection$all_plates_clean,
               filename = NA)
 ```
 
@@ -207,24 +221,24 @@ saveRDS(harmony_collection, './harmony_do_focus.RData')
 # save corresponding .csv
 # currently analyzing the following features
 selected_features <- c(
-  "multi_nucleated_cells_numberofobjects", 
-  "nuclei_numberofobjects", 
-  "infocus_intensity_cell_hoechst_mean_mean", 
-  "infocus_nucleus_hoechst_ser_dark_1px_mean", 
-  "infocus_nucleus_hoechst_ser_edge_1px_mean", 
-  "infocus_nucleus_hoechst_ser_hole_1px_mean",
-  "infocus_cell_area_mm2_mean",
-  "infocus_cell_mitotrackerdeepred_ser_dark_1px_mean", 
-  "infocus_cell_mitotrackerdeepred_ser_edge_1px_mean", 
-  "infocus_intensity_cell_mitotrackerdeepred_mean_mean" 
+  "nuclei_number_of_objects", 
+  "in_focus_cell_area_mm2_mean_per_well",
+  "in_focus_intensity_cell_hoechst_33342_mean_mean_per_well", 
+  "in_focus_nucleus_hoechst_33342_ser_dark_1_px_mean_per_well", 
+  "in_focus_nucleus_hoechst_33342_ser_edge_1_px_mean_per_well", 
+  "in_focus_nucleus_hoechst_33342_ser_hole_1_px_mean_per_well",
+  "in_focus_cell_mito_tracker_deep_red_ser_dark_1_px_mean_per_well", 
+  "in_focus_cell_mito_tracker_deep_red_ser_edge_1_px_mean_per_well", 
+  "in_focus_cell_mito_tracker_deep_red_ser_hole_1_px_mean_per_well",
+  "in_focus_intensity_cell_mito_tracker_deep_red_mean_2_mean_per_well" 
   )
 ```
 
 ```{r}
-summary(harmony_collection$all_plates_v2[,
+summary(harmony_collection$all_plates_clean[,
      c("dir","row","column","dose","individual","mouse",
        selected_features)])
-write.csv(harmony_collection$all_plates_v2[,
+write.csv(harmony_collection$all_plates_clean[,
      c("dir","row","column","dose","individual","mouse",
-       selected_features)], './harmony_do_focus_reduced.csv')
+       selected_features)], './harmony_do_focus_reduced.csv', row.names = FALSE) 
 ```
