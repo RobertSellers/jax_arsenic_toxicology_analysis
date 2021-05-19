@@ -74,43 +74,52 @@ housing <- housing %>%
   separate(name, c("housing_var_a","id","housing_var_c"), sep='-')
 ```
 
-# Transform
+# Plots
+
+## Wide to long tranform
 
 ```{r}
+bodyweights$color_gen <- sample(scales::hue_pal()(nrow(bodyweights)))
+
 bodyweights_long <- bodyweights %>% 
   gather(week, bodyweight, bw8:bw52) %>%
   mutate(id = factor(id),
          generation = g,
-         week_continuous = parse_number(week),
-         week = factor(readr::parse_number(week)),
+         week_continuous = readr::parse_number(week),
+         week = factor(week_continuous),
          bodyweight = round(as.numeric(bodyweight),1)) %>%
   left_join(housing) %>%
   select(-one_of("housing_var_a","housing_var_c"))
-  #filter(ID %notin% duplicates$ID) # 
 
-levels(bodyweights_long$bodyweight) <- c(levels(bodyweights_long$bodyweight),'') # add blank level
+# add count index per cage
+# bodyweights_long <- bodyweights_long %>%
+#   group_by(housing_id) %>%
+#   mutate(color_code = row_number())
+
+
+estimated_death_week <- bodyweights_long %>% 
+                 group_by(id) %>% 
+                 drop_na(bodyweight) %>%
+                 filter(week_continuous == max(week_continuous))
 ```
 
-# Plots
 
 ```{r}
 pdf("./output/bodyweight/mice_by_cage_v1.pdf")
-for (i in 1:44){
+for (i in 1:43){
 print(ggplot(bodyweights_long, aes(
   x = week, 
   y = bodyweight,
-  #color = id,
-  group = id)) +
+  group = id)
+  ) +
+  geom_path(aes(color = color_gen)) +
+  scale_colour_identity()+
   geom_point(size = 0.5) +
-  #geom_smooth(method = "loess") +
-  geom_line(aes(color=id)) +
-    ggrepel::geom_label_repel(aes(label = id),
+    ggrepel::geom_label_repel(aes(label = id, color = color_gen),
                alpha = 0.5,
-               data = bodyweights_long %>% group_by(id) %>% filter(week_continuous == max(week_continuous)),
-               #position=position_jitter(width=1,height=1),
-               #nudge_x = 1,
+               force = 5,
+               data = estimated_death_week,
                size = 2)  +
-  scale_x_discrete(drop=FALSE) +
   ggforce::facet_wrap_paginate(~ housing_id, 
                                ncol = 2, 
                                nrow = 2,
