@@ -38,7 +38,8 @@ harmony_create_collection <- function(
       evaluations <- list.dirs(path = child, full.names = TRUE, recursive = TRUE)
       file_list <- unlist(strsplit(evaluations[length(sort(evaluations))], "/"))
       child_name <- unlist(strsplit(child, "/"))[length(unlist(strsplit(child, "/")))]
-      e <- as.character(sub('.*(?=.{1}$)', '',file_list[length(file_list)], perl=T))
+      # extract evalution # from string
+      e <- as.character(readr::parse_number(file_list[length(file_list)]))
       plate_obj_name <- paste0("d",sub(" ", "_", gsub('\\-', '',sub("/","__",child_name))),"_e",e)
       
       cur_path <- file.path(dir,file_list[length(file_list)-1])
