@@ -137,19 +137,6 @@ summary(features_corrected[selected_features])
 
 ## Missing data per feature by individual
 
-- column names don't currently fit so use the lookup table below for reference
-
-* a = num_nuclei
-* b = cell_area
-* c = hoecsht_intensity
-* d = hoechst_dark
-* e = hoechst_edge
-* f = hoechst_hole
-* g = mito_dark
-* h = mito_edge
-* i = mito_hole
-* j = mito_intensity
-
 ```{r}
 missing_by_feature <- features_corrected %>% 
   group_by(individual) %>% 

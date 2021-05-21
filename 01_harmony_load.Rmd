@@ -79,7 +79,7 @@ __The next two code blocks are optional / not knitted. This utility is a develop
 
 ```{r warning=FALSE, eval=FALSE}
 # point to parent data directory
-selected_dir <- "data/invitro/harmony_do_focus"
+selected_dir <- "data/invitro/do_focus_updated"
 # Warning - this logic expects a ./temp_files data dir for caching
 # Set overwrite to TRUE when underlying data dir has been changed
 harmony_collection <- harmony_create_collection(dir = selected_dir,
@@ -111,7 +111,7 @@ harmony_collection <- harmony_create_collection(dir = selected_dir,
 - Revised data is then added to the collection as harmony_collection$all_plates_clean
 
 ```{r}
-# potentially universal updates for class creator
+# dynamic update dataset for ease of updating
 harmony_collection$all_plates_clean <- harmony_collection$all_plates %>% 
   dplyr::rename(dose = concentration) %>%
   tibble::add_column(sex = NA, .after="individual") %>%
@@ -123,7 +123,7 @@ harmony_collection$all_plates_clean <- harmony_collection$all_plates %>%
 # delete from dC20255_B2__20200926T13_00_37Measurement_2_e6 (Y)
 # where rows are 1:6 and column is 10
 
-# this needs a better standard / naming convention prior to analysis
+# Reading a fake csv is better than building dataframe
 excludes <- read.csv(text = "
 dir,row,column
 dC20264_B1__20200928T12_28_55Measurement_1_e5,6,9
@@ -141,32 +141,14 @@ harmony_collection$all_plates_clean <- dplyr::anti_join(harmony_collection$all_p
 
 # unique data cleaning
 harmony_collection$all_plates_clean <- harmony_collection$all_plates_clean %>% 
-  filter(
-  dose != 0.5, 
-  individual != '11_20',
-  individual != '5346') %>%
-  # incorrect pairs
-  mutate(plate=ifelse((dir=='dC20222_B2_rerun__20200829T11_01_59Measurement_4_e9'), 'B2', plate)) %>%
-  mutate(plate=ifelse((dir=='d20222_B1_Cal__20200825T12_23_59Measurement_3_e6'), 'B1', plate)) %>%
-  mutate(plate=ifelse((dir=='d20223_B2_Cal__20200817T11_02_00Measurement_1_e9'), 'A2', plate)) %>%
-  mutate(plate=ifelse((dir=='d20223_A1_Cal__20200817T17_03_14Measurement_2_e7'), 'A1', plate)) %>%
-  mutate(plate=ifelse((dir=='d20223_A2_Cal__20200818T14_54_58Measurement_1_e6'), 'B2', plate)) %>%
-  mutate(plate=ifelse((dir=='d20223_B1_Cal__20200827T10_48_20Measurement_1_e7'), 'B1', plate)) %>%
-  # incomplete pairs / ensuring completion of plate column
-  mutate(plate=ifelse((dir=='dC20236_B2__20200828T14_45_19Measurement_1_e8'), 'B2', plate)) %>%
-  mutate(plate=ifelse((dir=='dC20255_B1__20200925T14_41_51Measurement_5_e6'), 'B1', plate)) %>%
-  mutate(plate=ifelse((dir=='dC20255_B2__20200926T13_00_37Measurement_2_e6'), 'B2', plate)) %>%
-  mutate(plate=ifelse((dir=='dC20236_B1__20200828T13_12_27Measurement_1_e7'), 'B1', plate)) %>%
-  mutate(plate=ifelse((dir=='dC20255_B2_last3columns__20200928T09_33_41Measurement_1_e7'), 'B2', plate)) %>%
-  mutate(plate=ifelse((dir=='dC20264_B1__20200928T12_28_55Measurement_1_e5'), 'B1', plate)) %>%
-  mutate(plate=ifelse((dir=='dW20267_A1__20201002T10_37_07Measurement_1_e5'), 'A1', plate)) %>%
-  mutate(plate=ifelse((dir=='dW20267_A2__20201004T15_35_00Measurement_1_e5'), 'A2', plate)) %>%
-  mutate(plate=ifelse((dir=='dW20267_B1__20201004T12_18_54Measurement_2_e5'), 'B1', plate)) %>%
-  mutate(plate=ifelse((dir=='dW20267_B2__20201002T12_32_44Measurement_2_e5'), 'B2', plate)) %>%
+  filter(  
+    individual != '11_20',
+    individual != '5346'
+  ) %>%
+  # assert common dir structure
   mutate(dir=ifelse((dir=='dC20255_B2_last3columns__20200928T09_33_41Measurement_1_e7'), 'dC20255_B2__20200926T13_00_37Measurement_2_e6', dir)) %>%
   mutate(dir=ifelse((dir=='dC20264_B1_last3__20200928T13_26_45Measurement_1_e5'), 'dC20264_B1__20200928T12_28_55Measurement_1_e5', dir)) %>%
-  # hardcode mapped replicates to paired IDs
-  # this throws an error
+  mutate(dir=ifelse((dir=='dC20222_B2_rerun__20200829T11_01_59Measurement_4_e13'), 'd20222_B2__20200829T11_01_59Measurement_4_e13', dir)) %>%
   mutate(group_pair = LETTERS702[group_indices(., substr(plate,1,1), sub("\\_.*", "", dir))]) %>%
   mutate(
     fdose = factor(dose),
@@ -176,49 +158,28 @@ harmony_collection$all_plates_clean <- harmony_collection$all_plates_clean %>%
 
 ## Notes on changes
 
-- group_pairs with missing / removed well data
-  - B (Individual 1882 instrument malfunction at corner of plate)
-  - O (Individual 11_20 removed)
-  - W (Individual 5346 removed due to naming error; data split between runs)
-  - Y (Individual 5346 removed due to naming error; Individual 2213 instrument malfunction at corner of plate; Data split between runs)
-  - Z (Data split between runs)
+- group_pairs with removed / circumstantial data
+  - __O__; Individual __11_20__ removed
+  - __V__; Individual __1882__ missing data at 0.01, 1.25 (twice), 2.0, & 5.0 ppm
+  - __W__; Duplicated individual __5346__ removed; Individual __2401__ instrument non-read on 5.0 ppm; Data split between "runs"/dates (last 3 columns)
+  - __Y__; Duplicated individual __5346__ removed; Individual __2213__ instrument non-read on 1.25 & 5.0 ppm; Data split between "runs"/dates (last 3 columns)
+
+- review the _excludes_ logic shown above to understand split runs/dates within group_pairs/plates/individuals
 
 ## Additional new columns
 
-- this is needed for some subsequent plotting
+- this is needed for subsequent plotting of paired distributions
 
-```{r}
+```{r message=FALSE, results ='hide'}
 # integer bin_id logic
 # binary integer ID per plate pair (zero or 1)
-# this is slow / inefficient
+# this is slow - should be improved
 harmony_collection$all_plates_clean <- iterate_bin_id(harmony_collection$all_plates_clean)
 ```
 
-## Quick tables / plots
-
-### Counts per feature
+## Features
 
 ```{r}
-table(harmony_collection$all_plates_clean$group_pair, harmony_collection$all_plates_clean$bin_id)
-```
-
-### Paired plot on example feature
-
-```{r, fig.width=10, fig.height=10}
-boxplot_pairs(y ='in_focus_nucleus_hoechst_33342_ser_hole_1_px_mean_per_well',
-              data = harmony_collection$all_plates_clean,
-              filename = NA)
-```
-
-# Saves
-
-```{r}
-# save over .rdata
-saveRDS(harmony_collection, './harmony_do_focus.RData')
-```
-
-```{r}
-# save corresponding .csv
 # currently analyzing the following features
 selected_features <- c(
   "nuclei_number_of_objects", 
@@ -234,10 +195,44 @@ selected_features <- c(
   )
 ```
 
+## Quick tables / plots
+
+### Counts per group
+
+```{r}
+table(harmony_collection$all_plates_clean$group_pair, harmony_collection$all_plates_clean$bin_id)
+
+# for (pair in unique(harmony_collection$all_plates_clean$group_pair)){
+#   print(pair)
+#   print(with(subset(harmony_collection$all_plates_clean, group_pair == pair), table(dose,individual)))
+# }
+```
+
+### Paired plots
+
+```{r, fig.width=10, fig.height=10}
+boxplot_pairs(y = selected_features[7],
+              data = harmony_collection$all_plates_clean,
+              filename = NA)
+# for (feature in selected_features){
+#   print(boxplot_pairs(y =feature,
+#               data = harmony_collection$all_plates_clean,
+#               filename = NA))
+# }
+```
+
+# Saves
+
+```{r}
+# save over .rdata
+saveRDS(harmony_collection, './harmony_do_focus.RData')
+```
+
 ```{r}
 summary(harmony_collection$all_plates_clean[,
      c("dir","row","column","dose","individual","mouse",
        selected_features)])
+# save corresponding .csv
 write.csv(harmony_collection$all_plates_clean[,
      c("dir","row","column","dose","individual","mouse",
        selected_features)], './harmony_do_focus_reduced.csv', row.names = FALSE) 
