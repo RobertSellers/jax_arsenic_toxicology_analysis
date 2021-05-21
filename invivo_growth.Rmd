@@ -45,17 +45,34 @@ bodyweights <- read_excel(
     sheet = "bodyweight",
     .name_repair = janitor::make_clean_names
   )
-deaths <- read_excel(
-    "./data/invivo/arsenic_mouse_bodyweight.xlsx",
-    sheet = "deaths",
-    .name_repair = janitor::make_clean_names
-  )
+
 housing <- read_excel(
     "./data/invivo/arsenic_mouse_bodyweight.xlsx",
     sheet = "housing",
     .name_repair = janitor::make_clean_names
   ) %>%
-  separate(name, c("housing_var_a","id","housing_var_c"), sep='-')
+  separate(name, c("housing_var_a","id","housing_var_c"), sep='-') %>%
+  select(-one_of("housing_var_a","housing_var_c")) 
+
+deaths <- read_excel(
+    "./data/invivo/arsenic_mouse_bodyweight.xlsx",
+    sheet = "deaths",
+    .name_repair = janitor::make_clean_names
+  )  %>%
+  mutate(
+    birth_date = as.Date(birth_date, tz = "EST"),
+    death_exit_date = as.Date(death_exit_date, tz = "EST"),
+    series = "documented",
+    bodyweight = NA
+  ) %>%
+  dplyr::rename(week_as_date = death_exit_date,
+                weeks_integer = age_weeks) %>%
+  separate(name, c("housing_var_a","id","housing_var_c"), sep='-') %>%
+  select(-one_of("housing_var_a","housing_var_c")) %>%
+  #mutate(week_as_date = death_exit_date) %>% 
+  group_by(id) %>% 
+  # add placeholder for bodyweight
+  left_join(housing)
 ```
 
 # Initial QA
@@ -72,65 +89,153 @@ head(duplicates)
 
 # Plots
 
-## Wide to long tranform
+## Bodyweights/Housing datasets
 
 ```{r}
+# currently randomizing colors for all individuals
 bodyweights$color_gen <- sample(scales::hue_pal()(nrow(bodyweights)))
 
 bodyweights_long <- bodyweights %>% 
+  # collect 12 weekly bw's as single bodyweight column
   gather(week, bodyweight, bw8:bw52) %>%
   mutate(id = factor(id),
          generation = g,
+         # convert dob to date type
          dob = as.Date(dob, tz = "EST"),
+         # extract numeric week integer
          weeks_integer = readr::parse_number(week),
+         # adds week integer to real date
          week_as_date = dob + lubridate::weeks(weeks_integer),
+         # round bodyweight to one decimal, NA warning is fine
          bodyweight = round(as.numeric(bodyweight),1)
          ) %>%
-  left_join(housing) %>%
-  select(-one_of("housing_var_a","housing_var_c")) 
+  left_join(housing)
 
-estimated_death_week <- bodyweights_long %>% 
-                 group_by(id) %>% 
-                 drop_na(bodyweight) %>%
-                 filter(weeks_integer == max(weeks_integer))
+try_loess <- function (df) {
+  return(tryCatch(loess(bodyweight ~ weeks_integer, data = df,control=loess.control(surface="direct")), error=function(e) NULL))
+}
+
+try_predict <- function (x, df){
+    return(tryCatch(predict(x, df), error=function(e) NULL))
+}
+```
+
+## Predict death location prior to plotting
+
+```{r}
+# 15 is good
+set.seed(19)
+bodyweights_long_filtered <- bodyweights_long %>% 
+  group_by(housing_id) %>% 
+  sample_n_groups(8) %>%
+  filter(!all(is.na(bodyweight))) 
+
+loess_models <- plyr::dlply(bodyweights_long_filtered, "id", function(df){
+  try_loess(df)
+})
+
+# extract the final week value per individual
+estimated_death_week <- bodyweights_long_filtered %>% 
+  group_by(id) %>%
+  # drop NA here or label may get dropped
+  drop_na(bodyweight) %>% 
+  filter(weeks_integer == max(weeks_integer)) %>%
+  select(-one_of("dob","sex", "dose",
+                 "week","weeks_integer",
+                 "unique_id")) %>%
+  mutate(series = "extracted")
+
+
+all_deaths <- bind_rows(estimated_death_week,deaths) %>%
+  filter(id %in% unique(bodyweights_long_filtered$id))
+
+# predict data where documented death recorded
+#na.omit(subset(all_deaths$weeks_integer, names(x) %in% all_deaths$id))
+sub_models <- loess_models[unlist(names(loess_models) %in% all_deaths[all_deaths$series=="documented", ]$id)]
+sub_dates <- as.numeric(unlist(all_deaths[which(all_deaths$id %in% names(sub_models) & all_deaths$series == 'documented'), 'weeks_integer']))
+
+predictions <- list()
+for (i in seq_along(sub_models)) {
+  pred_name <- names(sub_models)[i]
+  predictions[pred_name] <- try_predict(x = sub_models[[i]], df =data.frame("weeks_integer"= sub_dates[i]))
+}
+
+pred_df <- stack(predictions) %>%
+   dplyr::rename(id = ind, bodyweight = values)
+  
+# apply predictions to dataframe
+deaths$bodyweight[match(pred_df$id, deaths$id)] <- pred_df$bodyweight
+# rebuild all_deaths
+all_deaths <- bind_rows(estimated_death_week,deaths) %>%
+  filter(id %in% unique(bodyweights_long_filtered$id)) %>% 
+  mutate(color_gen = replace_na(color_gen, 'black')) %>% 
+  group_by(id) %>%
+  fill(wave, generation) 
+
+plot_fits <- plyr::ldply(loess_models, function(mod){
+  data.frame("weeks_integer" = mod$x, "bodyweight" = mod$fitted)
+  }) %>%
+  left_join(housing, by = 'id') %>%
+    mutate(
+    id = as.numeric(id)
+    ) %>%
+  left_join(bodyweights) %>%
+  dplyr::rename(generation = g) %>%
+  mutate(
+    dob = as.Date(dob, tz = "EST"),
+    week_as_date = dob + lubridate::weeks(weeks_integer)
+  )
 ```
 
 
 ```{r}
-bodyweight_labeller <- function(variable,value){
-  browser()
+# bodyweight_labeller <- function(variable,value){
+#   browser()
+# }
 
-}
-
-pdf("./output/bodyweight/mice_by_cage_v1.pdf")
+pdf("./output/bodyweight/mice_by_cage_v2.pdf")
+# use n_pages on ggplot object on one page to estimate loop size
 #ggforce::n_pages()
+#n_pages <- 43
 
-for (i in 1:43){
-  print(ggplot(arrange(bodyweights_long, generation, wave, housing_id), aes(
+for (i in 1:2){
+  print(
+    ggplot(arrange(bodyweights_long_filtered, generation, wave, housing_id), 
+ aes(
     x = week_as_date, 
     y = bodyweight,
     group = id)
   ) +
+   
   geom_path(aes(color = color_gen)) +
+  # add color column for each individual
   scale_colour_identity() +
   geom_point(size = 0.5) +
-    ggrepel::geom_label_repel(aes(label = id, color = color_gen),
-               alpha = 0.6,
-               fontface = "bold",
-               force = 5,
-               data = estimated_death_week,
-               size = 2)  +
+  geom_point(data = all_deaths,
+             size = 2,
+             aes(shape = series),
+               color = 'red'
+             ) +
+  scale_shape_manual(values=c(0, 5)) +
+  ggrepel::geom_label_repel(aes(label = id, color = color_gen),
+             alpha = 0.6,
+             fontface = "bold",
+             # force = 15,
+             min.segment.length = unit(0, 'lines'),
+             data = all_deaths,
+             size = 2)  +
+   scale_colour_identity() +
+   geom_smooth(data = plot_fits,aes(color=color_gen), linetype = 'twodash',size=0.5) +
   ggforce::facet_wrap_paginate(~ wave +  housing_id, 
                                ncol = 2, 
                                nrow = 2,
                                page  = i,
                                scales = "free_y",
-                               labeller = labeller(wave = label_both, housing_id = label_both)
-                               ) + 
+                               labeller = labeller(wave = label_both, housing_id = label_both)) + 
   theme(
     strip.text = element_text(size=5),
     panel.border = element_rect(fill=NA, colour="grey40"),
-    axis.text.x = element_text(size = 8)
+    axis.text.x = element_text(size = 6)
   ) + 
   guides(colour=FALSE)
   )
