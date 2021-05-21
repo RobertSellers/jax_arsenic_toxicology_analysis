@@ -33,7 +33,7 @@ output:
 setwd('~/Desktop/projects/jax_arsenic_toxicology_analysis')
 
 suppressPackageStartupMessages(require(tidyverse))
-require(readxl)
+suppressPackageStartupMessages(require(readxl))
 source('scripts/custom_tools.R')
 ```
 
@@ -54,24 +54,20 @@ housing <- read_excel(
     "./data/invivo/arsenic_mouse_bodyweight.xlsx",
     sheet = "housing",
     .name_repair = janitor::make_clean_names
-  )
+  ) %>%
+  separate(name, c("housing_var_a","id","housing_var_c"), sep='-')
 ```
 
 # Initial QA
 
 ## Duplicates analysis
 
+- need to be handled
+
 ```{r}
 # this needs to get subset
-duplicates <- subset(bodyweights, id %in% bodyweights$ID[duplicated(bodyweights$id)])
+duplicates <- subset(bodyweights, id %in% bodyweights$id[duplicated(bodyweights$id)])
 head(duplicates)
-```
-
-## Add housing data
-
-```{r}
-housing <- housing %>%
-  separate(name, c("housing_var_a","id","housing_var_c"), sep='-')
 ```
 
 # Plots
@@ -85,50 +81,56 @@ bodyweights_long <- bodyweights %>%
   gather(week, bodyweight, bw8:bw52) %>%
   mutate(id = factor(id),
          generation = g,
-         week_continuous = readr::parse_number(week),
-         week = factor(week_continuous),
-         bodyweight = round(as.numeric(bodyweight),1)) %>%
+         dob = as.Date(dob, tz = "EST"),
+         weeks_integer = readr::parse_number(week),
+         week_as_date = dob + lubridate::weeks(weeks_integer),
+         bodyweight = round(as.numeric(bodyweight),1)
+         ) %>%
   left_join(housing) %>%
-  select(-one_of("housing_var_a","housing_var_c"))
-
-# add count index per cage
-# bodyweights_long <- bodyweights_long %>%
-#   group_by(housing_id) %>%
-#   mutate(color_code = row_number())
-
+  select(-one_of("housing_var_a","housing_var_c")) 
 
 estimated_death_week <- bodyweights_long %>% 
                  group_by(id) %>% 
                  drop_na(bodyweight) %>%
-                 filter(week_continuous == max(week_continuous))
+                 filter(weeks_integer == max(weeks_integer))
 ```
 
 
 ```{r}
+bodyweight_labeller <- function(variable,value){
+  browser()
+
+}
+
 pdf("./output/bodyweight/mice_by_cage_v1.pdf")
+#ggforce::n_pages()
+
 for (i in 1:43){
-print(ggplot(bodyweights_long, aes(
-  x = week, 
-  y = bodyweight,
-  group = id)
+  print(ggplot(arrange(bodyweights_long, generation, wave, housing_id), aes(
+    x = week_as_date, 
+    y = bodyweight,
+    group = id)
   ) +
   geom_path(aes(color = color_gen)) +
-  scale_colour_identity()+
+  scale_colour_identity() +
   geom_point(size = 0.5) +
     ggrepel::geom_label_repel(aes(label = id, color = color_gen),
-               alpha = 0.5,
+               alpha = 0.6,
+               fontface = "bold",
                force = 5,
                data = estimated_death_week,
                size = 2)  +
-  ggforce::facet_wrap_paginate(~ housing_id, 
+  ggforce::facet_wrap_paginate(~ wave +  housing_id, 
                                ncol = 2, 
                                nrow = 2,
                                page  = i,
-                               scales = "free_y"
+                               scales = "free_y",
+                               labeller = labeller(wave = label_both, housing_id = label_both)
                                ) + 
   theme(
+    strip.text = element_text(size=5),
     panel.border = element_rect(fill=NA, colour="grey40"),
-    axis.text.x = element_text(size = 8, angle = 45)
+    axis.text.x = element_text(size = 8)
   ) + 
   guides(colour=FALSE)
   )
