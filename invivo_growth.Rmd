@@ -75,24 +75,10 @@ deaths <- read_excel(
   left_join(housing)
 ```
 
-# Initial QA
-
-## Duplicates analysis
-
-- need to be handled
-
-```{r}
-# this needs to get subset
-duplicates <- subset(bodyweights, id %in% bodyweights$id[duplicated(bodyweights$id)])
-head(duplicates)
-```
-
 # Plots
 
-## Bodyweights/Housing datasets
 
 ```{r}
-# currently randomizing colors for all individuals
 bodyweights$color_gen <- sample(scales::hue_pal()(nrow(bodyweights)))
 
 bodyweights_long <- bodyweights %>% 
@@ -108,7 +94,7 @@ bodyweights_long <- bodyweights %>%
          week_as_date = dob + lubridate::weeks(weeks_integer),
          # round bodyweight to one decimal, NA warning is fine
          bodyweight = round(as.numeric(bodyweight),1)
-         ) %>%
+         )%>%
   left_join(housing)
 
 try_loess <- function (df) {
@@ -123,14 +109,15 @@ try_predict <- function (x, df){
 ## Predict death location prior to plotting
 
 ```{r}
-# 15 is good
-set.seed(19)
+# 19 is good
+#set.seed(4)
 bodyweights_long_filtered <- bodyweights_long %>% 
   group_by(housing_id) %>% 
-  sample_n_groups(8) %>%
+  sample_n_groups(20) %>%
   filter(!all(is.na(bodyweight))) 
 
 loess_models <- plyr::dlply(bodyweights_long_filtered, "id", function(df){
+  # implement better tryCatch / error proofing
   try_loess(df)
 })
 
@@ -145,18 +132,18 @@ estimated_death_week <- bodyweights_long_filtered %>%
                  "unique_id")) %>%
   mutate(series = "extracted")
 
-
 all_deaths <- bind_rows(estimated_death_week,deaths) %>%
-  filter(id %in% unique(bodyweights_long_filtered$id))
+  filter(id %in% unique(bodyweights_long_filtered$id)) #%>%
+  #fill(wave, generation)
 
 # predict data where documented death recorded
-#na.omit(subset(all_deaths$weeks_integer, names(x) %in% all_deaths$id))
 sub_models <- loess_models[unlist(names(loess_models) %in% all_deaths[all_deaths$series=="documented", ]$id)]
 sub_dates <- as.numeric(unlist(all_deaths[which(all_deaths$id %in% names(sub_models) & all_deaths$series == 'documented'), 'weeks_integer']))
 
 predictions <- list()
 for (i in seq_along(sub_models)) {
   pred_name <- names(sub_models)[i]
+  # implement better error catching here
   predictions[pred_name] <- try_predict(x = sub_models[[i]], df =data.frame("weeks_integer"= sub_dates[i]))
 }
 
@@ -176,10 +163,7 @@ plot_fits <- plyr::ldply(loess_models, function(mod){
   data.frame("weeks_integer" = mod$x, "bodyweight" = mod$fitted)
   }) %>%
   left_join(housing, by = 'id') %>%
-    mutate(
-    id = as.numeric(id)
-    ) %>%
-  left_join(bodyweights) %>%
+  left_join(bodyweights_long_filtered[,c("g","dob","week_as_date","id", "color_gen","wave")]) %>%
   dplyr::rename(generation = g) %>%
   mutate(
     dob = as.Date(dob, tz = "EST"),
@@ -187,34 +171,54 @@ plot_fits <- plyr::ldply(loess_models, function(mod){
   )
 ```
 
+## Damaged / Insufficient data check
+
+Reasons
+
+- death prior to bodyweight measurement < 12 weeks
+- value duplicated across cages
 
 ```{r}
-# bodyweight_labeller <- function(variable,value){
-#   browser()
-# }
+print("duplicated cages")
+bodyweights$id[duplicated(bodyweights$id)]
 
-pdf("./output/bodyweight/mice_by_cage_v2.pdf")
+print("missing measurements")
+all_deaths$id[is.na(all_deaths$bodyweight)]
+```
+
+## Clean data prior to plotting
+
+```{r}
+bodyweights_cleaned <-  bodyweights_long_filtered %>%
+  filter(!is.na(bodyweight)) %>%
+  filter (id %notin% bodyweights$id[duplicated(bodyweights$id)])
+
+loess_cleaned <- plot_fits %>%
+  filter(!is.na(bodyweight)) %>%
+  filter (id %notin% bodyweights$id[duplicated(bodyweights$id)])
+
+deaths_cleaned <- all_deaths %>%
+  filter(!is.na(bodyweight)) %>%
+  filter (id %notin% bodyweights$id[duplicated(bodyweights$id)])
+```
+
+```{r}
+pdf("./output/bodyweight/mice_by_cage_v5.pdf")
 # use n_pages on ggplot object on one page to estimate loop size
 #ggforce::n_pages()
-#n_pages <- 43
 
-for (i in 1:2){
+for (i in 1:ceiling(length(unique(loess_cleaned$housing_id))/4)){
   print(
-    ggplot(arrange(bodyweights_long_filtered, generation, wave, housing_id), 
- aes(
-    x = week_as_date, 
-    y = bodyweight,
-    group = id)
-  ) +
-   
+  ggplot(arrange(bodyweights_cleaned, generation, wave, housing_id), 
+    aes(x = week_as_date, y = bodyweight, group = id)) +
   geom_path(aes(color = color_gen)) +
-  # add color column for each individual
   scale_colour_identity() +
-  geom_point(size = 0.5) +
-  geom_point(data = all_deaths,
+   geom_smooth(data = loess_cleaned,aes(color=color_gen),
+               linetype = 'twodash',
+               size=0.5) +
+  geom_point(data = deaths_cleaned,
              size = 2,
-             aes(shape = series),
-               color = 'red'
+             aes(shape = series, color = 'black')
              ) +
   scale_shape_manual(values=c(0, 5)) +
   ggrepel::geom_label_repel(aes(label = id, color = color_gen),
@@ -222,10 +226,8 @@ for (i in 1:2){
              fontface = "bold",
              # force = 15,
              min.segment.length = unit(0, 'lines'),
-             data = all_deaths,
+             data = deaths_cleaned,
              size = 2)  +
-   scale_colour_identity() +
-   geom_smooth(data = plot_fits,aes(color=color_gen), linetype = 'twodash',size=0.5) +
   ggforce::facet_wrap_paginate(~ wave +  housing_id, 
                                ncol = 2, 
                                nrow = 2,
