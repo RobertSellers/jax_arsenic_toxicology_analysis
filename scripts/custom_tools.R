@@ -233,6 +233,7 @@ iterate_bin_id <- function(df){
   df <- df %>%
     tibble::add_column(bin_id = NA)
   for (i in 1:nrow(df)){
+    svMisc::progress((i/nrow(df))*100)
     if (i != 1){
       if (df[i,]$dir == df[i-1,]$dir){
         df[i,]$bin_id <- df[i-1,]$bin_id
@@ -245,6 +246,9 @@ iterate_bin_id <- function(df){
       }
     }else{
       df[i,]$bin_id <- 1
+    }
+    if (i == nrow(df)){
+      cat("Done\n")
     }
   }
   df$bin_id <- as.character(df$bin_id)
@@ -307,3 +311,12 @@ wrapit <- function(text) {
   wtext <- paste(strwrap(text,width=40),collapse=" \n ")
   return(wtext)
 }
+
+Mode <- function (x, na.rm) {
+    xtab <- table(x)
+    xmode <- names(which(xtab == max(xtab)))
+    if (length(xmode) > 1) xmode <- ">1 mode"
+    return(xmode)
+}
+
+SameElements <- function(a, b) return(identical(sort(a), sort(b)))

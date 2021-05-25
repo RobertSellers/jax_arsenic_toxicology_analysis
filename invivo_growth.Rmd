@@ -34,18 +34,15 @@ setwd('~/Desktop/projects/jax_arsenic_toxicology_analysis')
 
 suppressPackageStartupMessages(require(tidyverse))
 suppressPackageStartupMessages(require(readxl))
+
 source('scripts/custom_tools.R')
 ```
 
 # Load Data
 
-```{r}
-bodyweights <- read_excel(
-    "./data/invivo/arsenic_mouse_bodyweight.xlsx",
-    sheet = "bodyweight",
-    .name_repair = janitor::make_clean_names
-  )
+- Does removed housing split data matter?
 
+```{r}
 housing <- read_excel(
     "./data/invivo/arsenic_mouse_bodyweight.xlsx",
     sheet = "housing",
@@ -54,121 +51,171 @@ housing <- read_excel(
   separate(name, c("housing_var_a","id","housing_var_c"), sep='-') %>%
   select(-one_of("housing_var_a","housing_var_c")) 
 
+bodyweights <- read_excel(
+    "./data/invivo/arsenic_mouse_bodyweight.xlsx",
+    sheet = "bodyweight",
+    .name_repair = janitor::make_clean_names
+  ) %>%
+  dplyr::rename(generation = g) %>%
+  mutate(
+    id = factor(id),
+    date_of_birth = as.Date(dob, tz = "EST")
+  ) %>%
+  left_join(housing) %>%
+  group_by(housing_id) %>%
+  # adds a unique color column per id found
+  group_modify(~ {
+    .x %>%
+      mutate(color_gen = sample(scales::hue_pal()(nrow(.))))
+  }) %>%
+  gather(week, bodyweight, bw8:bw52) %>%
+  mutate(
+   # extract numeric week integer
+   weeks_integer = readr::parse_number(week),
+   # adds week integer to real date
+   week_as_date = dob + lubridate::weeks(weeks_integer),
+   # round bodyweight to one decimal, NA warning is fine
+   bodyweight = suppressWarnings(round(as.numeric(bodyweight),1))) %>%
+  # handle duplicates
+  group_by(id, weeks_integer) %>% 
+  mutate(num_dups = n(), 
+         dup_id = row_number()) %>% 
+  ungroup() %>% 
+  mutate(id = case_when(num_dups > 1 ~ paste0("D",dup_id,"_",id),
+         TRUE ~ id)) %>%
+  select(-one_of("week","dup_id","num_dups")) 
+
 deaths <- read_excel(
     "./data/invivo/arsenic_mouse_bodyweight.xlsx",
     sheet = "deaths",
     .name_repair = janitor::make_clean_names
   )  %>%
   mutate(
-    birth_date = as.Date(birth_date, tz = "EST"),
     death_exit_date = as.Date(death_exit_date, tz = "EST"),
-    series = "documented",
+    cause_of_death = status,
     bodyweight = NA
   ) %>%
   dplyr::rename(week_as_date = death_exit_date,
                 weeks_integer = age_weeks) %>%
   separate(name, c("housing_var_a","id","housing_var_c"), sep='-') %>%
-  select(-one_of("housing_var_a","housing_var_c")) %>%
-  #mutate(week_as_date = death_exit_date) %>% 
-  group_by(id) %>% 
-  # add placeholder for bodyweight
-  left_join(housing)
+  select(-one_of("housing_var_a","housing_var_c", "status")) %>%
+  left_join(housing)  %>%
+  select(-one_of("sex","birth_date")) 
 ```
 
-# Plots
-
+# Initiate fits on bodyweight data
 
 ```{r}
-bodyweights$color_gen <- sample(scales::hue_pal()(nrow(bodyweights)))
-
-bodyweights_long <- bodyweights %>% 
-  # collect 12 weekly bw's as single bodyweight column
-  gather(week, bodyweight, bw8:bw52) %>%
-  mutate(id = factor(id),
-         generation = g,
-         # convert dob to date type
-         dob = as.Date(dob, tz = "EST"),
-         # extract numeric week integer
-         weeks_integer = readr::parse_number(week),
-         # adds week integer to real date
-         week_as_date = dob + lubridate::weeks(weeks_integer),
-         # round bodyweight to one decimal, NA warning is fine
-         bodyweight = round(as.numeric(bodyweight),1)
-         )%>%
-  left_join(housing)
-
 try_loess <- function (df) {
-  return(tryCatch(loess(bodyweight ~ weeks_integer, data = df,control=loess.control(surface="direct")), error=function(e) NULL))
+  return(
+    tryCatch(
+    loess(bodyweight ~ weeks_integer, data = df,control=loess.control(surface="direct"))
+    , error=function(e) {
+      NULL
+    }
+    ))
 }
 
 try_predict <- function (x, df){
     return(tryCatch(predict(x, df), error=function(e) NULL))
 }
-```
 
-## Predict death location prior to plotting
-
-```{r}
-# 19 is good
-#set.seed(4)
-bodyweights_long_filtered <- bodyweights_long %>% 
-  group_by(housing_id) %>% 
-  sample_n_groups(20) %>%
-  filter(!all(is.na(bodyweight))) 
-
-loess_models <- plyr::dlply(bodyweights_long_filtered, "id", function(df){
-  # implement better tryCatch / error proofing
+# generate loess models
+# check list for NULL
+loess_models <- plyr::dlply(bodyweights, "id", function(df){
   try_loess(df)
 })
+```
 
-# extract the final week value per individual
-estimated_death_week <- bodyweights_long_filtered %>% 
+## Prepare causes_of_death data
+
+```{r}
+# creates dataset from final non-NA value encountered
+cause_of_death <-  bodyweights %>% 
   group_by(id) %>%
-  # drop NA here or label may get dropped
-  drop_na(bodyweight) %>% 
   filter(weeks_integer == max(weeks_integer)) %>%
-  select(-one_of("dob","sex", "dose",
-                 "week","weeks_integer",
-                 "unique_id")) %>%
-  mutate(series = "extracted")
+  select(-one_of("dose","weeks_integer")) %>%
+  mutate(
+    series = "end_of_study"
+    ) %>%
+  bind_rows(deaths)
+```
 
-all_deaths <- bind_rows(estimated_death_week,deaths) %>%
-  filter(id %in% unique(bodyweights_long_filtered$id)) #%>%
-  #fill(wave, generation)
+# Predictive analysis
 
-# predict data where documented death recorded
-sub_models <- loess_models[unlist(names(loess_models) %in% all_deaths[all_deaths$series=="documented", ]$id)]
-sub_dates <- as.numeric(unlist(all_deaths[which(all_deaths$id %in% names(sub_models) & all_deaths$series == 'documented'), 'weeks_integer']))
+```{r}
+# predict data where is documented death recorded
+# WARNING: this is not finding duplicated models, but this wasn't necessary here for these 3/6 dups
+# many model are returning as NULL
+sub_models <- loess_models[unlist(names(loess_models) %in% cause_of_death[is.na(cause_of_death$series), ]$id)]
 
+# extracts predictive inputs from loess model list
+sub_dates <- subset(cause_of_death, id %in% names(sub_models))[,c('id','weeks_integer')] %>%
+  na.omit() %>%
+  arrange(id)
+
+# run predictions
 predictions <- list()
 for (i in seq_along(sub_models)) {
   pred_name <- names(sub_models)[i]
   # implement better error catching here
-  predictions[pred_name] <- try_predict(x = sub_models[[i]], df =data.frame("weeks_integer"= sub_dates[i]))
+  predictions[pred_name] <- try_predict(x = sub_models[[i]], df = data.frame("weeks_integer"= sub_dates$weeks_integer[i]))
+    
 }
+#unsuccessful models
+#sapply(sub_models, function(y) sum(length(which(is.null(y)))))
 
+# cleanup
 pred_df <- stack(predictions) %>%
    dplyr::rename(id = ind, bodyweight = values)
-  
-# apply predictions to dataframe
-deaths$bodyweight[match(pred_df$id, deaths$id)] <- pred_df$bodyweight
-# rebuild all_deaths
-all_deaths <- bind_rows(estimated_death_week,deaths) %>%
-  filter(id %in% unique(bodyweights_long_filtered$id)) %>% 
-  mutate(color_gen = replace_na(color_gen, 'black')) %>% 
-  group_by(id) %>%
-  fill(wave, generation) 
 
-plot_fits <- plyr::ldply(loess_models, function(mod){
+```
+
+## Rebuilding deaths from predicted data
+
+```{r}
+# apply predictions to dataframe
+# zeros seem to be applying
+# ONLY RUN ON NA / NOT END_OF_STUDY
+deaths_rebuild <- cause_of_death %>%
+  filter(is.na(series)) %>%
+  mutate(series = 'documented')
+
+deaths_rebuild$bodyweight[match(pred_df$id, deaths_rebuild$id)] <- pred_df$bodyweight
+
+# rebuild all_deaths
+all_deaths <- filter(cause_of_death, !is.na(series)) %>%
+  bind_rows(deaths_rebuild) %>%
+  group_by(id) %>%
+  fill(wave, generation, color_gen) 
+```
+
+# Extract loess model fits
+
+```{r}
+bw_original <- plyr::ldply(loess_models, function(mod){
+  # first construct a data.frame for entire list of models x / y
   data.frame("weeks_integer" = mod$x, "bodyweight" = mod$fitted)
   }) %>%
-  left_join(housing, by = 'id') %>%
-  left_join(bodyweights_long_filtered[,c("g","dob","week_as_date","id", "color_gen","wave")]) %>%
-  dplyr::rename(generation = g) %>%
+  mutate(tmp_id = gsub(".*_", "", id)) %>%
+  left_join(housing, by = c("tmp_id" = "id")) %>%
+  right_join(bodyweights, 
+             by=c("id","weeks_integer"),
+             suffix = c("_fit", "_recorded")) %>%
+  select(-one_of("tmp_id","housing_id_fit","dob")) %>% 
+  dplyr::rename(housing_id = housing_id_recorded,
+                bodyweight = bodyweight_recorded) %>%
+  # needed?
   mutate(
-    dob = as.Date(dob, tz = "EST"),
-    week_as_date = dob + lubridate::weeks(weeks_integer)
-  )
+    week_as_date = as.Date(week_as_date, tz = "EST")
+  ) %>%
+  group_by(housing_id) %>% 
+  ######optional######
+  sample_n_groups(10) 
+  ####################
+
+bw_fit <- bw_original %>%
+  select(-one_of("bodyweight_fit")) 
 ```
 
 ## Damaged / Insufficient data check
@@ -179,68 +226,76 @@ Reasons
 - value duplicated across cages
 
 ```{r}
-print("duplicated cages")
-bodyweights$id[duplicated(bodyweights$id)]
-
-print("missing measurements")
-all_deaths$id[is.na(all_deaths$bodyweight)]
+# print("missing deaths measurements")
+# all_deaths$id[is.na(all_deaths$bodyweight)]
 ```
 
-## Clean data prior to plotting
+## Last minute hacky code to appease ggplot
 
 ```{r}
-bodyweights_cleaned <-  bodyweights_long_filtered %>%
-  filter(!is.na(bodyweight)) %>%
-  filter (id %notin% bodyweights$id[duplicated(bodyweights$id)])
-
-loess_cleaned <- plot_fits %>%
-  filter(!is.na(bodyweight)) %>%
-  filter (id %notin% bodyweights$id[duplicated(bodyweights$id)])
-
 deaths_cleaned <- all_deaths %>%
-  filter(!is.na(bodyweight)) %>%
-  filter (id %notin% bodyweights$id[duplicated(bodyweights$id)])
+  filter(id %in% unique(bw_original$id)) %>%
+  mutate(week_as_date = as.Date(week_as_date, tz = "EST"))
 ```
 
 ```{r}
-pdf("./output/bodyweight/mice_by_cage_v5.pdf")
+
+pdf("./output/bodyweight/mice_by_cage_v6.pdf")
 # use n_pages on ggplot object on one page to estimate loop size
 #ggforce::n_pages()
 
-for (i in 1:ceiling(length(unique(loess_cleaned$housing_id))/4)){
+for (i in 1:ceiling(length(unique(bw_original$housing_id))/4)){
   print(
-  ggplot(arrange(bodyweights_cleaned, generation, wave, housing_id), 
+  ggplot(arrange(bw_original, generation, wave, housing_id), 
     aes(x = week_as_date, y = bodyweight, group = id)) +
-  geom_path(aes(color = color_gen)) +
-  scale_colour_identity() +
-   geom_smooth(data = loess_cleaned,aes(color=color_gen),
-               linetype = 'twodash',
-               size=0.5) +
+    # xlim(min(bw_original$week_as_date), max(bw_original$week_as_date)+ months(3)) +
+  ################################
+  geom_path(aes(color = color_gen), 
+            size = 0.5,
+            linetype = 'dotted') +
   geom_point(data = deaths_cleaned,
              size = 2,
-             aes(shape = series, color = 'black')
+             aes(x = as.Date(week_as_date), #weird
+                 y = bodyweight,
+                 shape = series,
+                 color = color_gen)
              ) +
-  scale_shape_manual(values=c(0, 5)) +
-  ggrepel::geom_label_repel(aes(label = id, color = color_gen),
+    scale_shape_manual(values = c(0, 5)) +    
+  ggrepel::geom_text_repel(aes_q(label = ~paste(id, "\n", ifelse(is.na(comments), "", sprintf("%s",comments)),"\n",
+                  ifelse(is.na(comments), "", sprintf("%s",cause_of_death))                              ), color = as.character(deaths_cleaned$color_gen)),
              alpha = 0.6,
              fontface = "bold",
-             # force = 15,
+             direction = 'both',
+             nudge_x = 20,
+             force_pull = 4,
              min.segment.length = unit(0, 'lines'),
              data = deaths_cleaned,
              size = 2)  +
-  ggforce::facet_wrap_paginate(~ wave +  housing_id, 
+      xlim(min(bw_original$week_as_date), max(bw_original$week_as_date)+ months(3)) +
+  geom_smooth(data = bw_fit,
+              aes(x = week_as_date,
+                  y = bodyweight,
+                  color=color_gen),
+              linetype = 'solid',
+              se = FALSE,
+              size=0.5) +
+  geom_point(data = bw_original, aes(x = week_as_date, y = bodyweight), size=0.15) +
+  ######### setting x limits, nudging to the right #########
+ggforce::facet_wrap_paginate(~ wave +  housing_id, 
                                ncol = 2, 
                                nrow = 2,
                                page  = i,
                                scales = "free_y",
                                labeller = labeller(wave = label_both, housing_id = label_both)) + 
+  scale_x_date( date_labels = "%b", date_breaks = '4 weeks')+
   theme(
     strip.text = element_text(size=5),
     panel.border = element_rect(fill=NA, colour="grey40"),
-    axis.text.x = element_text(size = 6)
+    axis.text.x = element_text(size = 6, angle = 90, vjust = 0.5, hjust=1)
   ) + 
   guides(colour=FALSE)
   )
 }
 dev.off()
+
 ```
