@@ -30,10 +30,13 @@ output:
 # Environment
 
 ```{r}
+options(scipen = 999) # suppress sci notation
+
 setwd('~/Desktop/projects/jax_arsenic_toxicology_analysis')
 
 suppressPackageStartupMessages(require(tidyverse))
 suppressPackageStartupMessages(require(readxl))
+require(ggpubr)
 
 source('scripts/custom_tools.R')
 ```
@@ -83,7 +86,11 @@ bodyweights <- read_excel(
   ungroup() %>% 
   mutate(id = case_when(num_dups > 1 ~ paste0("D",dup_id,"_",id),
          TRUE ~ id)) %>%
-  select(-one_of("week","dup_id","num_dups")) 
+  select(-one_of("week","dup_id","num_dups")) %>%
+  mutate(fdose = factor(dose)) %>% 
+# add date ranking for normal date analysis
+  group_by(wave, id) %>%
+  mutate(date_order = order(order(week_as_date)))
 
 deaths <- read_excel(
     "./data/invivo/arsenic_mouse_bodyweight.xlsx",
@@ -105,6 +112,8 @@ deaths <- read_excel(
 
 # Initiate fits on bodyweight data
 
+-check https://www.statforbiology.com/nonlinearregression/usefulequations
+
 ```{r}
 try_loess <- function (df) {
   return(
@@ -117,13 +126,13 @@ try_loess <- function (df) {
 }
 
 try_predict <- function (x, df){
-    return(tryCatch(predict(x, df), error=function(e) NULL))
+    return(tryCatch(suppressWarnings(predict(x, df)), error=function(e) NULL))
 }
 
 # generate loess models
 # check list for NULL
 loess_models <- plyr::dlply(bodyweights, "id", function(df){
-  try_loess(df)
+  suppressWarnings(try_loess(df))
 })
 ```
 
@@ -134,9 +143,9 @@ loess_models <- plyr::dlply(bodyweights, "id", function(df){
 cause_of_death <-  bodyweights %>% 
   group_by(id) %>%
   filter(weeks_integer == max(weeks_integer)) %>%
-  select(-one_of("dose","weeks_integer")) %>%
+  select(-one_of("weeks_integer")) %>%
   mutate(
-    series = "end_of_study"
+    est_method = "end_of_study"
     ) %>%
   bind_rows(deaths)
 ```
@@ -147,7 +156,7 @@ cause_of_death <-  bodyweights %>%
 # predict data where is documented death recorded
 # WARNING: this is not finding duplicated models, but this wasn't necessary here for these 3/6 dups
 # many model are returning as NULL
-sub_models <- loess_models[unlist(names(loess_models) %in% cause_of_death[is.na(cause_of_death$series), ]$id)]
+sub_models <- loess_models[unlist(names(loess_models) %in% cause_of_death[is.na(cause_of_death$est_method), ]$id)]
 
 # extracts predictive inputs from loess model list
 sub_dates <- subset(cause_of_death, id %in% names(sub_models))[,c('id','weeks_integer')] %>%
@@ -159,8 +168,10 @@ predictions <- list()
 for (i in seq_along(sub_models)) {
   pred_name <- names(sub_models)[i]
   # implement better error catching here
-  predictions[pred_name] <- try_predict(x = sub_models[[i]], df = data.frame("weeks_integer"= sub_dates$weeks_integer[i]))
-    
+  predictions[pred_name] <- try_predict(
+    x = sub_models[[i]], 
+    df = data.frame("weeks_integer"= sub_dates$weeks_integer[i])
+  )
 }
 #unsuccessful models
 #sapply(sub_models, function(y) sum(length(which(is.null(y)))))
@@ -178,16 +189,16 @@ pred_df <- stack(predictions) %>%
 # zeros seem to be applying
 # ONLY RUN ON NA / NOT END_OF_STUDY
 deaths_rebuild <- cause_of_death %>%
-  filter(is.na(series)) %>%
-  mutate(series = 'documented')
+  filter(is.na(est_method)) %>%
+  mutate(est_method = 'documented')
 
 deaths_rebuild$bodyweight[match(pred_df$id, deaths_rebuild$id)] <- pred_df$bodyweight
 
 # rebuild all_deaths
-all_deaths <- filter(cause_of_death, !is.na(series)) %>%
+all_deaths <- filter(cause_of_death, !is.na(est_method)) %>%
   bind_rows(deaths_rebuild) %>%
   group_by(id) %>%
-  fill(wave, generation, color_gen) 
+  fill(wave, generation, color_gen, dose) 
 ```
 
 # Extract loess model fits
@@ -203,76 +214,148 @@ bw_original <- plyr::ldply(loess_models, function(mod){
              by=c("id","weeks_integer"),
              suffix = c("_fit", "_recorded")) %>%
   select(-one_of("tmp_id","housing_id_fit","dob")) %>% 
-  dplyr::rename(housing_id = housing_id_recorded,
-                bodyweight = bodyweight_recorded) %>%
   # needed?
   mutate(
     week_as_date = as.Date(week_as_date, tz = "EST")
   ) %>%
-  group_by(housing_id) %>% 
+  dplyr::rename(housing_id = housing_id_recorded,
+                bodyweight = bodyweight_recorded) %>%
+  group_by(housing_id) #%>% 
   ######optional######
-  sample_n_groups(10) 
+   # sample_n_groups(10) 
   ####################
 
 bw_fit <- bw_original %>%
   select(-one_of("bodyweight_fit")) 
-```
 
-## Damaged / Insufficient data check
-
-Reasons
-
-- death prior to bodyweight measurement < 12 weeks
-- value duplicated across cages
-
-```{r}
-# print("missing deaths measurements")
-# all_deaths$id[is.na(all_deaths$bodyweight)]
-```
-
-## Last minute hacky code to appease ggplot
-
-```{r}
 deaths_cleaned <- all_deaths %>%
   filter(id %in% unique(bw_original$id)) %>%
-  mutate(week_as_date = as.Date(week_as_date, tz = "EST"))
+  mutate(week_as_date = as.Date(week_as_date, tz = "EST")) %>%
+  drop_na(bodyweight) %>%
+  fill(sex,dob,fdose,dose) 
+# %>%
+#   group_by(id) %>%
+#   arrange(est_method) %>%
+#   slice(1)
+
+# add deaths to fit prior to smooth line
+bw_fit_w_estimates <- rbind(bw_fit,filter(deaths_cleaned,est_method == 'documented')) %>%
+  fill(sex,dose,date_order)
 ```
 
-```{r}
+## QA dataset
 
-pdf("./output/bodyweight/mice_by_cage_v6.pdf")
+```{r}
+# qa time
+bw_hs <- as.data.frame(table(bodyweights$wave, bodyweights$housing_id, bodyweights$id)) %>%
+  filter(Freq != 0) %>%
+  dplyr::rename(
+    wave = Var1,
+    housing_id = Var2,
+    id = Var3,
+    count = Freq
+  )
+```
+
+## Group fit from predicted
+- very hacky code 
+
+```{r}
+k <- bw_original %>% group_by(wave) %>% 
+summarize(date = sort(unique(week_as_date),collapse=", ")) %>%
+  group_split(wave)
+
+k2 <- do.call(cbind, k) 
+valid_column_names <- make.names(names=names(k2), unique=TRUE, allow_ = TRUE)
+names(k2) <- valid_column_names
+
+k3 <- k2 %>% 
+  dplyr::select(starts_with("date")) %>%
+  rename_all(funs(c("1", "2","3","4","5","6","7","8"))) %>% 
+  mutate(
+    date_order=as.integer(row_number())
+    ) %>%
+  gather(wave,week_as_date, 1:8)
+
+k4 <- bw_fit_w_estimates %>% 
+  expand(date_order = seq(1:12)) %>%
+  left_join(k3, by='date_order')
+
+k5 <- k4 %>%
+  group_by(housing_id,date_order,wave,week_as_date) %>%
+  expand(dose = unique(bw_fit_w_estimates$dose),
+         sex = c("M","F")) 
+
+bw_fit_w_estimates_means <- bw_fit_w_estimates %>%
+  drop_na(bodyweight) %>%
+  group_by(wave, sex, dose, week_as_date) %>%
+  summarize(bodyweight = mean(bodyweight))
+
+k6 <- bw_fit_w_estimates_means %>%
+  mutate(wave = as.character(wave)) %>%
+  semi_join(k5, by = c("wave","sex", "dose")) %>%
+  mutate(id = paste0(sex,"-",dose,"-",wave),
+         wave = as.numeric(wave))
+
+k7 <- left_join(k6, bw_fit_w_estimates, by = c('wave', 'sex','dose','week_as_date')) %>%
+  select(wave,sex,dose,week_as_date,bodyweight.x,id.x,housing_id) %>%
+  dplyr::rename(bodyweight = bodyweight.x, id = id.x) %>%
+  distinct()
+
+rm(k,k2,k3,k4,k5,k6)
+```
+
+## reverse engineer K7
+
+ - more hacky code
+
+```{r}
+lookup_agg <- bw_fit_w_estimates %>%
+  drop_na(bodyweight) %>%
+  group_by(sex,dose,date_order) %>%
+  summarize(bodyweight = mean(bodyweight))
+
+# This works but the CIs are junk
+k8 <- k7 %>%
+  select(-one_of("bodyweight")) %>%
+  group_by(wave, id, housing_id) %>%
+  mutate(date_order = order(order(week_as_date))) %>%
+  left_join(lookup_agg, by = c('sex','dose','date_order')) %>% 
+  mutate(color_gen = ifelse(sex == 'M', 'blue', 'pink'))
+```
+
+## Fits plot
+
+ - not knit - look for PDF
+
+```{r eval = FALSE}
+
+pdf("./output/bodyweight/mice_by_cage_v12.pdf")
 # use n_pages on ggplot object on one page to estimate loop size
 #ggforce::n_pages()
 
 for (i in 1:ceiling(length(unique(bw_original$housing_id))/4)){
   print(
-  ggplot(arrange(bw_original, generation, wave, housing_id), 
+  ggplot(arrange(bw_original, sex, wave, housing_id, dose), 
     aes(x = week_as_date, y = bodyweight, group = id)) +
+     # geom_vline(aes(xintercept=week_as_date),
+     #            linetype=5, colour="black",  size = .1) +
+    
     # xlim(min(bw_original$week_as_date), max(bw_original$week_as_date)+ months(3)) +
   ################################
+  geom_smooth(data = k8, 
+              aes(x = week_as_date,
+                  y = bodyweight
+                  ),
+              linetype = 'solid',
+              color = 'black',
+              se = FALSE,
+              span = 0.6
+              ) +
   geom_path(aes(color = color_gen), 
             size = 0.5,
-            linetype = 'dotted') +
-  geom_point(data = deaths_cleaned,
-             size = 2,
-             aes(x = as.Date(week_as_date), #weird
-                 y = bodyweight,
-                 shape = series,
-                 color = color_gen)
-             ) +
-    scale_shape_manual(values = c(0, 5)) +    
-  ggrepel::geom_text_repel(aes_q(label = ~paste(id, "\n", ifelse(is.na(comments), "", sprintf("%s",comments)),"\n",
-                  ifelse(is.na(comments), "", sprintf("%s",cause_of_death))                              ), color = as.character(deaths_cleaned$color_gen)),
-             alpha = 0.6,
-             fontface = "bold",
-             direction = 'both',
-             nudge_x = 20,
-             force_pull = 4,
-             min.segment.length = unit(0, 'lines'),
-             data = deaths_cleaned,
-             size = 2)  +
-      xlim(min(bw_original$week_as_date), max(bw_original$week_as_date)+ months(3)) +
-  geom_smooth(data = bw_fit,
+            linetype = 'dotdash') +
+  geom_smooth(data = bw_fit_w_estimates,
               aes(x = week_as_date,
                   y = bodyweight,
                   color=color_gen),
@@ -280,22 +363,271 @@ for (i in 1:ceiling(length(unique(bw_original$housing_id))/4)){
               se = FALSE,
               size=0.5) +
   geom_point(data = bw_original, aes(x = week_as_date, y = bodyweight), size=0.15) +
+  geom_point(data = deaths_cleaned,
+             size = 2, show.legend = FALSE,
+             aes(x = as.Date(week_as_date), #weird
+                 y = bodyweight,
+                 shape = est_method,
+                 color = color_gen)
+             ) +
+  scale_shape_manual(values = c(16, 1)) +   # doc, end
+  ggrepel::geom_text_repel(
+    aes_q(label = ~paste(id,"\n", 
+          ifelse(is.na(cause_of_death),"",paste0(sprintf("%s",cause_of_death),"\n")),
+          ifelse(is.na(comments),"",sprintf("%s",comments))), 
+           color = as.character(deaths_cleaned$color_gen)),
+           fontface = "bold",
+           direction = 'both',
+           nudge_x = 25,
+           #arrow = grid::arrow(),
+           force_pull = 3,
+           segment.colour = 'black',
+           #min.segment.length = unit(0, 'lines'),
+           data = deaths_cleaned,
+           size = 2)  + 
   ######### setting x limits, nudging to the right #########
-ggforce::facet_wrap_paginate(~ wave +  housing_id, 
-                               ncol = 2, 
-                               nrow = 2,
+ggforce::facet_wrap_paginate(~ sex + dose + wave + housing_id, 
+                               ncol = 1, 
+                               nrow = 4,
                                page  = i,
+                               strip.position="right",
                                scales = "free_y",
-                               labeller = labeller(wave = label_both, housing_id = label_both)) + 
-  scale_x_date( date_labels = "%b", date_breaks = '4 weeks')+
+                               labeller = labeller( wave = label_both, housing_id = label_both, dose = label_both, sex = label_both)) + 
+  scale_x_date(date_labels = "%b-%y", date_breaks = '1 month',minor_breaks=NULL) +
+  ylab("Bodyweights (grams)") +
+  xlab("Arsenic Dose (ppm)")
+  # ylim(min(bw_original$bodyweight_fit,bw_original$bodyweight),max(bw_original$bodyweight_fit,bw_original$bodyweight)) +
+  #xlab("                                          < 2019 | 2020 >                                                        | 2021")+
   theme(
-    strip.text = element_text(size=5),
+    strip.text = element_text(size=8),
     panel.border = element_rect(fill=NA, colour="grey40"),
-    axis.text.x = element_text(size = 6, angle = 90, vjust = 0.5, hjust=1)
-  ) + 
-  guides(colour=FALSE)
+    axis.text.x = element_text(size = 6, angle = 45, vjust = 1.1, hjust=1),
+    axis.title.x=element_blank()
+  ) + guides(colour = FALSE, shape = guide_legend(),
+  linetype = guide_legend())
+
   )
 }
 dev.off()
+```
 
+## ttest + anova for  bodyweight decrease
+
+- check out https://rpkgs.datanovia.com/rstatix/
+
+```{r}
+bw_fit_w_estimates_quickfix <- bw_fit_w_estimates %>%
+  drop_na(fdose)
+
+bw_fit_w_estimates_quickfix %>%
+  group_by(sex,fdose) %>%
+  get_summary_stats(bodyweight, type = "mean_sd") 
+
+
+# see if significance in reduction of bodyweight @ 10 ppm
+# 10 < 1
+
+dose_pairs <- expand.grid(dose_1 = unique(bw_fit_w_estimates_quickfix$dose), dose_2 = unique(bw_fit_w_estimates_quickfix$dose)) %>%
+  mutate(p = NA,
+         stderr = NA) %>%
+  filter(dose_1 != dose_2)
+
+for (i in 1:nrow(dose_pairs)){
+
+    g_a <- subset(bw_fit_w_estimates, dose==dose_pairs[i,]$dose_1)
+  g_b <- subset(bw_fit_w_estimates, dose==dose_pairs[i,]$dose_2)
+ttest_temp <- t.test(
+      g_a$bodyweight,
+      g_b$bodyweight, 
+      alternative = "less"
+     )
+    dose_pairs[i,"p"] <- ttest_temp$p.value
+    dose_pairs[i,"stderr"] <- ttest_temp$stderr
+}
+
+dose_pairs <- dose_pairs %>%
+  mutate(p = round(p,5),
+         stderr = round(stderr,4)) %>% 
+  arrange(p)
+
+# Anova
+anova_sex <- aov(bodyweight ~ fdose + sex + sex:fdose, data = bw_fit_w_estimates)
+# summary(anova_sex)
+coefficients(anova_sex)
+```
+
+## Bodyweight avg plot
+
+```{r}
+small_axis_theme = theme(
+  axis.title.x = element_text(size = 8),
+  axis.text.x = element_text(size = 6),
+  axis.text.y = element_text(size = 6),
+  axis.title.y = element_text(size = 8))
+
+cc_months <- scales::seq_gradient_pal("blue", "red", "Lab")(seq(0,1,length.out=12))
+
+cc_fdose <- scales::seq_gradient_pal("green", "red", "Lab")(seq(0,1,length.out=5))
+
+cc_initweight <- scales::seq_gradient_pal("green", "red", "Lab")(seq(0,1,length.out=10))
+
+bw_original <- bw_original %>%
+  group_by(id) %>%
+  mutate(initial_bw    = first(bodyweight), 
+         f_dateorder = factor(date_order),
+         initial_bw_num =as.numeric(initial_bw))
+
+# table(bw_original$initial_bw, bw_original$dose)
+bw_original$initial_bw <- as.factor(Hmisc::cut2(bw_original$initial_bw, g=10))
+
+############################
+df_all <- CreateAllFacet(bw_original, "sex")
+a <- ggplot()+
+  geom_smooth(data = filter(df_all, !is.na(bodyweight)), 
+              aes(x = f_dateorder,
+                  y = bodyweight,
+                  group=fdose,
+                  color = fdose
+                  ),
+              linetype = 'solid',
+              size = 0.5,
+              span = 0.6,
+              se = FALSE
+              ) + facet_wrap(~ facet,dir = 'h') + ggtitle("sex x dose") +     
+    scale_colour_manual(values=cc_fdose) + small_axis_theme 
+a <- addSmallLegend_8(a)
+############################
+b <- ggpubr::ggtexttable(subset(dose_pairs, p < 0.3), theme = ggpubr::ttheme("classic")) %>%
+ tab_add_title(text = 't-tests; dose pairs < 0.05 asc', padding = unit(1.5, "line")) 
+
+b <- table_cell_bg(b, row = 3:8, column = 2:5,
+                      fill="darkolivegreen1")
+
+############################
+c <- ggplot()+
+  geom_smooth(data =filter(bw_original, !is.na(bodyweight)),
+              aes(x = fdose,
+                  y = bodyweight,
+                  group = interaction(sex,f_dateorder),
+                  color = f_dateorder
+              ),
+              size = 0.5,
+              span = 0.6,
+              se = FALSE
+              ) + facet_wrap(~ sex,dir = 'h') +ggtitle("sex:dateorder interaction")  +
+    scale_colour_manual(values=cc_months) + small_axis_theme
+c <- addSmallLegend_8(c)
+############################
+d <- ggplot()+
+  geom_smooth(data = filter(bw_original, !is.na(bodyweight) & fdose %in% c(0,10)), 
+              aes(x = f_dateorder,
+                  y = bodyweight,
+                  group = interaction(initial_bw, fdose),
+                  color = initial_bw
+                  ),
+              linetype = 'solid',
+              size = 0.5,
+              span = 0.6,
+              se = FALSE
+              ) + ggtitle("sex x dose:initial_bw interaction") +     
+    scale_colour_manual(values=cc_initweight) + facet_grid(~ fdose~sex) + small_axis_theme
+
+d <- addSmallLegend_8(d)
+
+pdf("./output/bodyweight/eval_bw_4plot_v1.pdf")
+ggpubr::ggarrange(a, b, c, d, common.legend = F, ncol = 2, nrow = 2) 
+dev.off()
+```
+
+
+```{r}
+ # ggplot()+
+ #  geom_smooth(data = filter(bw_original, !is.na(bodyweight)), 
+ #              aes(x = factor(date_order),
+ #                  y = bodyweight,
+ #                  group= interaction(sex,dose),
+ #                  color = sex
+ #                  ),
+ #              linetype = 'solid',
+ #              size = 0.4,
+ #             # span = 0.6,
+ #              alpha = 0.6,
+ #              se = FALSE
+ #              ) + facet_wrap(~ initial_bw ,dir = 'h', scales = "fixed")+ ggtitle("sex:dose interaction with initial weight bins")
+ggplot()+
+  geom_smooth(data =filter(bw_original, !is.na(bodyweight)), 
+              
+              aes(x = fdose,
+                  y = bodyweight,
+                  group = interaction(sex,f_dateorder),
+                  color = date_order,
+                  linetype = sex
+                  ),
+             # linetype = 'solid',
+              size = 0.5,
+              span = 0.6,
+              se = FALSE
+              ) + ggtitle("sex:dateorder interaction") + 
+  viridis::scale_color_viridis( option = "D", "Month+1")
+
+```
+
+# Variance analysis
+
+## Initial boxplot
+
+```{r}
+#https://rpkgs.datanovia.com/ggpubr/reference/ggpar.html
+p <- ggpubr::ggboxplot(filter(bw_fit_w_estimates, !is.na(dose)), x = "dose", y = "bodyweight", color='sex')
+#ggpubr::ggpar(p, legend = "none")
+ggpubr::ggpar(p)
+```
+
+## Dose factor
+
+```{r}
+anova_fdose <- aov(bodyweight ~ fdose, data = bw_fit_w_estimates)
+summary(anova_fdose)
+plot(anova_fdose,1)
+plot(anova_fdose,2)
+broom::tidy(TukeyHSD(anova_fdose, "fdose", conf.level = 0.95))
+```
+
+## Dose factor with id
+
+```{r}
+anova_id <- aov(bodyweight ~ fdose + sex + sex:fdose + sex:fdose:factor(date_order) , data = bw_fit_w_estimates)
+anova_id
+anova_id$coefficients
+
+# coefs <- data.frame("id" = gsub("[^0-9.-]", "",names(anova_id$coefficients)), "variance" =gsub("[^0-9.-]", "",anova_id$coefficients)
+# ) %>%
+#   mutate(variance = as.numeric(variance))%>%
+#         inner_join(., bw_fit_w_estimates, by = "id") %>%
+#   distinct(id, wave, dose, variance,sex)
+# broom::tidy(TukeyHSD(anova_id, "id", conf.level = 0.95))
+# plot(anova_id,1)
+# plot(anova_id,2)
+DT::datatable(broom::tidy(TukeyHSD(anova_id, "date_order", conf.level = 0.95)))
+```
+
+## Dose factor with sex and sex:fdose interaction
+
+```{r}
+anova_sex <- aov(bodyweight ~ sex + sex:fdose , data = bw_fit_w_estimates)
+
+
+
+# is significant on at least one dose
+summary(anova_sex)
+
+DT::datatable(broom::tidy(TukeyHSD(anova_sex, "sex:fdose", conf.level = 0.95)))
+plot(anova_sex,1)
+plot(anova_sex,2)
+```
+
+## Dose factor with initial bw
+
+```{r}
+# anova_sex <- aov(bodyweight ~ sex + sex:fdose , data = bw_fit_w_estimates)
 ```
