@@ -416,21 +416,3 @@ prepare_ed50s_stan <- function(model_, original_data){
   return (df)
 
 }
-
-# prepare_data_for_stan <- function(ft, dat, log_ = FALSE, scale_ = TRUE){
-#   dat$response <- as.numeric(unlist(dat[,c(ft)]))
-#   dat <- dat[!is.na(dat$response), ] 
-#   if (log_) {
-#       dat$response <- log(dat$response)
-#   }
-#   if (scale_){
-#     dat[is.na(dat) | dat == Inf | dat == -Inf] <- NA 
-#     dat <- dat[!is.na(dat$response), ] 
-#     dat$response <- scales::rescale(dat$response, 
-#                                     to = c(0.01,100), 
-#                                     from = range(dat$response), 
-#                                     na.rm = TRUE, 
-#                                     finite = TRUE)
-#   }
-#   return(dat)
-# }
