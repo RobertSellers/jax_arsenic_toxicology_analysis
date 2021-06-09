@@ -1,5 +1,6 @@
 # cache system
 temp_files/*.RData
+temp_files/*.stan
 
 # Preserve data dir structure but don't version data itself
 data/invitro/*
@@ -122,3 +123,8 @@ papers/*
 figures/presentations/*
 callan_system/temp_files/*
 callan_system/do_focus/*
+
+# cleanup markdown knits
+# ./*.html
+temp_files/*.stan
+*.RData
