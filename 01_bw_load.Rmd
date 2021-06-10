@@ -48,7 +48,7 @@ source('scripts/custom_tools.R')
 
 ```{r}
 housing <- read_excel(
-    "./data/invivo/arsenic_mouse_bodyweight.xlsx",
+    "./data/invivo/arsenic_bodyweight.xlsx",
     sheet = "housing",
     .name_repair = janitor::make_clean_names
   ) %>%
@@ -60,7 +60,7 @@ housing <- read_excel(
 
 ```{r}
 bodyweights <- read_excel(
-    "./data/invivo/arsenic_mouse_bodyweight.xlsx",
+    "./data/invivo/arsenic_bodyweight.xlsx",
     sheet = "bodyweight",
     .name_repair = janitor::make_clean_names
   ) %>%
@@ -129,7 +129,7 @@ bodyweights <- read_excel(
 ```{r}
 # provided via email 
 deaths_supplement <- read_excel(
-    "./data/invivo/arsenic_mouse_bodyweight.xlsx",
+    "./data/invivo/arsenic_bodyweight.xlsx",
     sheet = "deaths_supplement",
     .name_repair = janitor::make_clean_names
   )  %>%
@@ -145,7 +145,7 @@ deaths_supplement <- read_excel(
   dplyr::select(-date_of_birth)
 
 deaths <- read_excel( 
-    "./data/invivo/arsenic_mouse_bodyweight.xlsx",
+    "./data/invivo/arsenic_bodyweight.xlsx",
     sheet = "deaths",
     .name_repair = janitor::make_clean_names
   )  %>%
@@ -255,6 +255,7 @@ cause_of_death <- estimated_deaths %>%
 ## Impute / interpolation
 
 - operates on NA between existing values
+- this is extremely limited - needs a lot of work
 
 ```{r}
 bodyweights <-  bodyweights %>%
@@ -284,11 +285,15 @@ bw_fit_w_estimates <- plyr::ldply(loess_lm_models, function(mod){
   select(-one_of("tmp_id","housing_id_fit")) %>% 
   dplyr::rename(housing_id = housing_id_recorded,
                 bodyweight = bodyweight_recorded) %>%
-  bind_rows(cause_of_death)
+  bind_rows(cause_of_death) %>%
+  mutate(bodyweight_fit= round(bodyweight_fit,2)) %>%
+  relocate(id, bodyweight, bodyweight_fit,date_order,sex, housing_id)
 ```
 
 # Saves
 
+- currently filters 1) redundant 'end_of_study' extraction and 2) empty gathered fields.
+
 ```{r}
-write.csv(bw_fit_w_estimates, './output/bodyweight/bw_processed.csv', row.names = FALSE)
+write.csv(dplyr::select(filter(bw_fit_w_estimates, !is.na(date_order) & !is.na(bodyweight)), -c("color_gen", "data_source","comments","cause_of_death")), './output/bodyweight/arsenic_bodyweight_processed.csv', row.names = FALSE)
 ```
