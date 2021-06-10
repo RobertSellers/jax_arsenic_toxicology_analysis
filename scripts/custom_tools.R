@@ -1,3 +1,5 @@
+## Supplmentary script collection
+
 # rankZ transform function definition
 rankZ <- function(x) {
   x <- rank(x, na.last = "keep") / (length(x) - sum(is.na(x)) + 1)
@@ -84,94 +86,6 @@ sample_n_groups = function(grouped_df, size, replace = FALSE, weight=NULL) {
 substrRight <- function(x, n){
   substr(x, nchar(x)-n+1, nchar(x))
 }
-
-# rescale_feature_df_0_100 <- function(data, covariates){
-#   all_features <- query_features(data)
-#   data[,c(all_features)] <- lapply(data[,c(all_features)], function(x) as.numeric(as.character(x)))
-#   data[,c(all_features)] <- lapply(data[,c(all_features)], function(x) scales::rescale(x, to = c(0.001, 99.999)))
-#   return (list(
-#     "rescaled_data" = data[,c(covariates,all_features)],
-#     "parameters" = list(
-#       "max_n" = length(all_features)
-#       )
-#     )
-#   )
-# }
-
-# ######## 2 #########
-# mean_correlation_by_doseresponse <- function(data, group_id = 'mouse', remove_outliers = TRUE){
-  
-#   ############ extract dose pairs for loop #############
-#   f <- function(x) {
-#     s <- seq(2, length(x), 1)
-#     paste(x[s-1], x[s], sep=",")
-#   }
-  
-#   dose_pairs <- as.data.frame(do.call(rbind, strsplit(f(sort(unique(data$rescaled_data$dose))), ",")))
-#   colnames(dose_pairs) <- c("low","high")
-#   ######################################################
-  
-#   mean_corr_dosepair_df_list<-mean_stdev_df_list<-mean_corr_matrix_list<-list()
-    
-#   # loop through dose pairs
-#   for (i in 1:nrow(dose_pairs)){
-#     low <- dose_pairs[i, "low"]
-#     high  <- dose_pairs[i, "high"]
-#     print(paste("processing response change at", low,":",high, "at",group_id,"level"))
-    
-#     sub_df_mean_diff_per_dose_response <- data$rescaled_data %>%
-#       dplyr::filter(dose %in% c(low,high)) %>% # select only values inside low and high
-#       separate(mouse, c("strain","replicate")) %>% # extract specific - remove as is unnecessary
-#       group_by(strain, dose) %>%  # group by strain and dose - also unnecessary code
-#       summarise_each(funs(mean), -c(replicate)) %>% # mean of each strain per dose response change
-#       group_by(strain) %>%# now just group by strain
-#       #filter_at(vars(-c(strain, dose)), all_vars(!(abs(. - median(.)) > 2*sd(.)))) %>% # removing outliers not advisable
-#       summarise_at(vars(-dose),diff) # calculate difference in mean values
-#     sub_df_stdev_per_dose_response <- data$rescaled_data %>%
-#       dplyr::filter(dose %in% c(low,high)) %>% # select only values inside low and high
-#       separate(mouse, c("strain","replicate")) %>% # fix
-#       group_by(strain) %>%  # group by strain 
-#       summarise_at(vars(-c(replicate, dose)),diff) %>%# get difference per dose pair within strain group
-#       group_by(strain) %>%
-#       summarise_each(funs(sd))
-    
-#     # keep the first column 
-#     names <-  sub_df_mean_diff_per_dose_response$strain
-    
-#     # Transpose everything other than the first column
-#     mean_T <- as.data.frame(as.matrix(t(sub_df_mean_diff_per_dose_response[,-1])))
-#     stdev_T <- as.data.frame(as.matrix(t(sub_df_stdev_per_dose_response[,-1])))
-    
-#     # Assign first column as the column names of the transposed dataframe
-#     colnames(stdev_T) <- colnames(mean_T) <- names
-#     res2<-Hmisc::rcorr(as.matrix(t(mean_T)), type="spearman")
-#     ut <- upper.tri(res2$r)
-    
-#     features_a <- rownames(res2$r)[row(res2$r)[ut]]
-#     features_b <- rownames(res2$r)[col(res2$r)[ut]]
-#     correlations <- (res2$r)[ut]
-    
-#     flat_matrix_to_df <- data.frame(
-#       feature_a = features_a,
-#       feature_b = features_b,
-#       cor  = correlations
-#       )
-#     colnames(flat_matrix_to_df)[3] <- paste0("cor_",low,"_",high)
-    
-#     # append DR matrix to sub list
-#     mean_corr_matrix_list[[paste0("interval_",low,"_",high)]] <- res2$r
-#     mean_stdev_df_list[[paste0("interval_",low,"_",high)]] <- as.matrix(stdev_T)
-#     mean_corr_dosepair_df_list[[paste0("interval_",low,"_",high)]] <- flat_matrix_to_df
-#   }
-#   # return all 3 sublists
-#   return (list("mean_corr_matrix_list" = mean_corr_matrix_list,
-#                "mean_stdev_df_list" = mean_stdev_df_list,
-#                "mean_corr_dosepair_df_list" = mean_corr_dosepair_df_list,
-#                "parameters" = list(
-#                   "max_n" = data$parameters$max_n
-#                )
-#                ))
-# }
 
 log_skew_transform <- function(response_var) {
   skew_val <- e1071::skewness(response_var)
@@ -380,6 +294,8 @@ debug_contr_error <- function (dat, subset_vec = NULL) {
     return(merged)
 }
 
+# custom ggplot themes
+# ggplot themes
 addSmallLegend_3 <- function(myPlot, pointSize = 0.5, textSize = 3, spaceLegend = 0.1) {
     myPlot +
         guides(shape = guide_legend(override.aes = list(size = pointSize)),
