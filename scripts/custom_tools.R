@@ -427,3 +427,4 @@ try_loess_lm <- function (df) {
 try_predict <- function (x, df){
     return(tryCatch(suppressWarnings(predict(x, df)), error=function(e) NULL))
 }
+

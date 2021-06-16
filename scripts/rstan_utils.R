@@ -383,20 +383,34 @@ predict_harmony_stan <- function(object, ..., newdata=NULL){
 
 ### Custom extraction functions
 
-prepare_ed50s_drc <- function(model_, original_data){
-  ed50_drc <- as.data.frame(drc::ED(model_, 50))
-ed50_drc$individual <- str_match(rownames(ed50_drc), ":\\s*(.*?)\\s*:")[,2]
-  # this might be a problem
-  df = data.frame("individual_id" = as.character(ed50_drc$individual), "dose" = ed50_drc$Estimate)
+
+prepare_ed50s_drc <- function(model_, original_data, type='none', pool = 'FALSE'){
+  # extract ed50 with whatever default calculation
+  ed50_drc <- as.data.frame(drc::ED(model_, 50, 
+                                    interval = type,
+                                    display = FALSE, 
+                                    lref = 0,
+                                    uref = 5,
+                                    pool=pool, 
+                                    type="absolute")
+                            )
+  # regex the ugly rownames
+  ed50_drc$individual <- str_match(rownames(ed50_drc), ":\\s*(.*?)\\s*:")[,2]
+  # for output
+  df = data.frame(
+    "individual_id" = as.character(ed50_drc$individual), 
+    "dose" = ed50_drc$Estimate
+    )
+  # retrieve the response per ed50 estimation with the model
   df$pred <- predict(model_, data.frame(
     dose = ed50_drc$Estimate,
     individual_id = str_match(rownames(ed50_drc), ":\\s*(.*?)\\s*:")[,2]
   ))
   df$group <- "drc"
   df$ed50 <- df$dose
-  return (df)
+  #df$dose <- NULL
+  return (df[,c('individual_id','ed50','pred','group')])
 }
-
 # returns individual id to original value
 map_do_to_original <- function(df_new, df_org){
   lookup_df <- df_org[,c('individual','individual_id')]
@@ -415,4 +429,95 @@ prepare_ed50s_stan <- function(model_, original_data){
   df$group <- "stan"
   return (df)
 
+}
+
+plot_posterior_growth_ci <- function(fit, dat, cred = TRUE){
+  # browser()
+  Y_mean <- rstan::extract(fit, "Y_mean")
+  Y_mean_mean <- apply(Y_mean$Y_mean, 2, mean)
+  Y_pred <- rstan::extract(fit, "Y_pred")
+  Y_pred_mean <- apply(Y_pred$Y_pred, 2, mean)
+  
+  if (cred){
+    Y_mean_cred <- apply(Y_mean$Y_mean, 2, quantile, c(0.05, 0.95))
+    Y_pred_cred <- apply(Y_pred$Y_pred, 2, quantile, c(0.05, 0.95))
+    plot(dat$y ~ dat$x, xlab="x", ylab="Y", 
+       ylim=c(-1, 101), main="Non-linear Growth Curve")
+    lines(dat$x, Y_mean_mean)
+    points(dat$x, Y_pred_mean, pch=19)
+    lines(dat$x, Y_mean_cred[1,], col=4)
+    lines(dat$x, Y_mean_cred[2,], col=4)
+    lines(dat$x, Y_pred_cred[1,], col=2)
+    lines(dat$x, Y_pred_cred[2,], col=2)
+    legend(x="bottomright", bty="n", lwd=2, lty=c(NA, NA, 1, 1,1),
+           legend=c("observation", "prediction", "mean prediction",
+                    "90% mean cred. interval", "90% pred. cred. interval"),
+           col=c(1,1,1,4,2),  pch=c(1, 19, NA, NA, NA))
+  }else{
+    plot(dat$y ~ dat$x, xlab="x", ylab="Y", 
+       ylim=c(-1, 101), main="Non-linear Growth Curve")
+    lines(dat$x, Y_mean_mean)
+    points(dat$x, Y_pred_mean, pch=19)
+    legend(x="bottomright", bty="n", lwd=2, lty=c(NA, NA, 1, 1,1),
+           legend=c("observation", "prediction", "mean prediction"),
+           col=c(1,1,1,4,2),  pch=c(1, 19, NA, NA, NA))
+  }
+}
+
+build_standrc_object_single <- function(stan_dat, stancode, fit){
+  out <- list()
+  out$data <- stan_dat
+  out$model <- stancode
+  out$stan <- fit
+  out$fixedpars <- c("slope","lasy","uasy","ed")
+  out$pars <- c("pslope", "plasy", "puasy", "ped", "passym")
+  out$curves <- list(pars=c(FALSE,FALSE,FALSE,FALSE),
+                     J=1,
+                     names=NULL
+                     )
+  out$fixed <- c(NA,NA,NA,NA,0)
+  out$fct <- LL.4()
+  class(out) <- "standrc"
+  return(out)
+}
+
+prepare_data_for_stan <- function(ft, dat, log_ = FALSE, scale_ = TRUE){
+  dat$response <- as.numeric(unlist(dat[,c(ft)]))
+  dat <- dat[!is.na(dat$response), ] 
+  if (log_) {
+      dat$response <- log(dat$response)
+  }
+  if (scale_){
+    dat$response <- scales::rescale(dat$response, 
+                                    to = c(0.01,100), 
+                                    from = range(dat$response), # add outlier reduction here?
+                                    na.rm = TRUE, 
+                                    finite = TRUE)
+  }
+  return(dat)
+}
+
+# extracts upper/lower estimates from drc model, single-curve
+extract_upper_lower <- function(m_4param){
+  est_a <- coef(m_4param)[2]
+  est_b <- coef(m_4param)[3]
+  if(est_b > est_a){
+    return (list("c" = est_a, "d" = est_b))
+  }else{return (list("c" = est_b, "d" = est_a))}
+}
+
+# batch correction lme4 auto script
+batch_correct <- function(formula_,feature, data, r.eff, target_col, debug = FALSE){
+  if (debug) browser()
+  pheno_raw <- as.numeric(unlist(data[,c(feature)]))
+  mn.pheno <- mean(pheno_raw, na.rm=TRUE)
+  sd.pheno <- sd(pheno_raw, na.rm=TRUE)
+  data$pheno <- (pheno_raw - mn.pheno) / sd.pheno
+  fit <- lmer(formula_, data, REML=FALSE)
+  random_effects <- ranef(fit)
+  effects <- random_effects[[r.eff]]
+  batch.ef <- effects[as.character(data[,c(target_col)][[1]]),]
+  pheno_sub <- data$pheno - batch.ef
+  pheno_adj <- (sd.pheno * pheno_sub) + mn.pheno
+  return (pheno_adj)
 }

@@ -1,0 +1,263 @@
+---
+title: "DO #1f consolidated v1"
+author:
+- name: Robert Sellers
+  affiliation: The Jackson Laboratory
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
+abstract: |
+latex_engine: pdflatex
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    number_sections: true
+    theme: lumen
+    toc: yes
+    toc_float: yes
+    df_print: paged
+    # code_folding: "hide"
+  pdf_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pyments
+    keep_tex: yes
+    latex_engine: xelatex
+    number_sections: no
+    toc: no
+    
+---
+
+# Programming environment
+
+```{r}
+setwd("/Users/seller/Desktop/projects/jax_arsenic_toxicology_analysis")
+
+# env
+options(scipen = 999) # suppress sci notation
+
+# contains harmony plate collection class builder
+source("scripts/harmony_utils.R")
+# various add-on scripts and stats tools
+source("scripts/custom_tools.R")
+# standrc code that actually works
+source('scripts/rstan_utils.R')
+
+library(tidyverse)
+library(janitor)
+library(ggplot2) 
+library(ggfortify)
+library(ggpubr)
+library(lme4)
+library(lmerTest)
+library(sjPlot)
+library(nlme)
+library(dplyr)
+library(standrc)
+library(robustbase)
+library(scales)
+library(tibble)
+library(broom)
+library(plotly)
+suppressWarnings(library(sqldf))
+```
+
+# Data setup
+
+
+```{r}
+setwd("~/Desktop/projects/jax_arsenic_toxicology_analysis")
+
+harmony_data <- read.csv('data/invitro/harmony_do_focus_reduced_corrected.csv')
+```
+
+# Batch corrections
+
+- control group 0 concentration (tbd)
+- plate to plate (with lme4 or stan)
+
+# Analytics data construction
+
+```{r}
+feature_subset <- harmony_data %>%
+  mutate(fdose=factor(dose)) %>%
+  group_by(dir) %>%
+  mutate(dir_id = cur_group_id()) %>%
+  group_by(individual) %>%
+  mutate(individual_id = cur_group_id())
+
+feature_subset <- prepare_data_for_stan('in_focus_nucleus_hoechst_33342_ser_dark_1_px_mean_per_well',feature_subset,log_ = FALSE)
+```
+
+
+## StanDRC
+
+### Example stan code
+
+- code was constructed / extracted from standrc + stan documentation
+
+```{r}
+stan_ll4 <- "
+data {
+  int<lower=0> N; 
+  real y[N];
+  real<lower=0> x[N];
+  real pb; 
+  real pc; 
+  real pd; 
+  real pe;
+} 
+parameters { 
+  real<lower=0> sigmasq_y;
+  real slope; 
+  real lasy; 
+  real uasy; 
+  real<lower=0> ed;
+} 
+transformed parameters {
+  real<lower=0> sigma_y;
+  real mu[N];
+  sigma_y = sqrt(sigmasq_y); 
+  for(i in 1:N){ 
+    mu[i] = lasy  + ( uasy - lasy ) / (1 + exp(-exp( slope ) * (log(x[i]/ ed ))))^exp( 0 );
+  }
+} 
+model {
+  slope ~ normal(pb, 100) ; 
+  lasy ~ normal(pc, 100) ; 
+  uasy ~ normal(pd, 100) ; 
+  ed ~ normal(pe, 100) ;
+  sigmasq_y ~ inv_gamma(0.001, 0.001) ; 
+  y ~ normal(mu, sigma_y);
+}
+generated quantities {
+  real Y_mean[N]; 
+  real Y_pred[N]; 
+  real residuals[N];
+  real log_lik[N];
+  real pslope; 
+  real plasy; 
+  real puasy; 
+  real ped; 
+  real passym;
+  for (i in 1:N){
+    residuals[i] = y[i] - mu[i];
+    log_lik[i] = normal_log(y[i], mu[i], sigma_y);
+    Y_mean[i] = lasy  + ( uasy - lasy ) / (1 + exp(-exp( slope ) * (log(x[i]/ ed ))))^exp( 0 );
+    Y_pred[i] = normal_rng(Y_mean[i], sigma_y);   
+  }
+  pslope  =  slope  ; 
+  plasy = lasy  ; 
+  puasy  =  uasy  ; 
+  ped  =  ed  ; 
+  passym  =  0  ;
+}
+"
+# alternative
+stan_growth <- "
+data {
+  int<lower=0> N; 
+  real<lower=0> x[N];
+  real y[N]; 
+} 
+parameters {
+  real alpha; 
+  real beta;  
+  real<lower=.5,upper= 1> lambda; // original gamma in the JAGS example  
+  real<lower=0> tau; 
+} 
+transformed parameters {
+  real sigma; 
+  real m[N];
+  for (i in 1:N) 
+    m[i] = alpha - beta * pow(lambda, x[i]);
+  sigma = 1 / sqrt(tau); 
+} 
+model {
+  // priors
+  alpha ~ normal(0.0, 1000); 
+  beta ~ normal(0.0, 1000); 
+  lambda ~ uniform(.5, 1); 
+  tau ~ gamma(.0001, .0001); 
+  // likelihood
+  y ~ normal(m, sigma);   
+}
+generated quantities{
+  real Y_mean[N]; 
+  real Y_pred[N]; 
+  for(i in 1:N){
+    // Posterior parameter distribution of the mean
+    Y_mean[i] = alpha - beta * pow(lambda, x[i]);
+    // Posterior predictive distribution
+    Y_pred[i] = normal_rng(Y_mean[i], sigma);   
+}
+}
+"
+# rstan_options(auto_write = TRUE)
+# options(mc.cores = parallel::detectCores())
+# fit_ll4 <- rstan::stan(model_code = stan_ll4, 
+#             model_name = "new", 
+#             data = dat)
+```
+
+### Model generation + priors
+
+```{r}
+# single aggregate fits for single drc
+m.stan.single.avg <- standrm_harmony(
+  formula=response ~ dose, 
+  data=feature_subset, 
+  fct = LL.4(),
+  iter = 6000)
+
+# individual fits on each replicate
+# no flat / default priors
+m.stan.all.baseline <- standrm_harmony(
+  formula = response ~ dose, 
+  data = feature_subset, 
+  fct = LL.4(), # slope, lower limit, upper limit, ed50
+  curveid = b + e ~ individual_id,
+  iter = 6000
+  )
+```
+
+### Emperical model
+
+- incomplete, just like the rest of these
+
+
+```{r}
+# experimental / in-progress model
+#
+indv_slope_estimate<- feature_subset %>% 
+  group_by(individual_id) %>% 
+  nest() %>% 
+  mutate(model = map(data, ~ lm(response ~ dose, data = .x) %>% tidy)) %>% 
+  unnest(model) %>% 
+  filter(term == 'dose')
+
+m.drc.single <- drc::drm(response ~ dose, 
+  data = feature_subset,
+  type = 'continuous',
+  fct = drc::LL.4())
+
+#estimates <- extract_upper_lower(m.drc.single)
+
+m.stan.all.informed <- standrm_harmony(
+  formula = response ~ dose, 
+  data = feature_subset, 
+  fct = LL.4(), # slope, lower limit, upper limit, ed50
+  curveid = b + e ~ individual_id,
+  standrc_priors(
+   b = paste0("normal(pb,",sd(indv_slope_estimate$estimate),")"),
+   e = "normal(pe, 1)",
+   pb = indv_slope_estimate$estimate, 
+   # pc = as.numeric(estimates$c),
+   # pd = as.numeric(estimates$d)
+   ),
+  random = b + c + d ~ dir_id,
+  iter = 6000
+)
+
+
+```
+
