@@ -365,3 +365,65 @@ ThresholdingAlgo <- function(y,lag,threshold,influence) {
   }
   return(list("signals"=signals,"avgFilter"=avgFilter,"stdFilter"=stdFilter))
 }
+
+# threshold is for stdev of signal
+# between 0 and 1, 1 is normal, 0.5 is half
+thresholding_algo <- function(y,lag,threshold,influence)  {
+  signals <- rep(0,length(y))
+  filteredY <- y[0:lag]
+  avgFilter <- NULL
+  stdFilter <- NULL
+  avgFilter[lag] <- mean(y[0:lag], na.rm=TRUE)
+  stdFilter[lag] <- sd(y[0:lag], na.rm=TRUE)
+  for (i in (lag+1):length(y)){
+    if (abs(y[i]-avgFilter[i-1]) > threshold*stdFilter[i-1]) {
+      if (y[i] > avgFilter[i-1]) {
+        signals[i] <- 1;
+      } else {
+        signals[i] <- -1;
+      }
+      filteredY[i] <- influence*y[i]+(1-influence)*filteredY[i-1]
+    } else {
+      signals[i] <- 0
+      filteredY[i] <- y[i]
+    }
+    avgFilter[i] <- mean(filteredY[(i-lag):i], na.rm=TRUE)
+    stdFilter[i] <- sd(filteredY[(i-lag):i], na.rm=TRUE)
+  }
+  return(list("signals"=signals,"avgFilter"=avgFilter,"stdFilter"=stdFilter))
+}
+
+
+try_thresholding <- function(y,lag,threshold,influence){
+  return(
+    tryCatch({
+        thresholding_algo(y,lag,threshold,influence)
+      }, error=function(e) {
+          paste0("failed with ", length(y))
+        }
+      )
+  )
+}
+
+try_loess_lm <- function (df) {
+  return(
+    tryCatch({
+      if (nrow(na.omit(df)) == 2 | nrow(na.omit(df)) == 1){
+        lm(bodyweight ~ weeks_continuous, data = na.omit(df))
+      }else if (nrow(na.omit(df)) == 3){
+        loess(bodyweight ~ weeks_continuous, data = na.omit(df),control = loess.control(surface="direct"), span = 2)
+      }else if(nrow(na.omit(df)) > 20){
+        loess(bodyweight ~ weeks_continuous, data = na.omit(df), span = 0.25)
+      }else{
+        # default
+        loess(bodyweight ~ weeks_continuous, data = na.omit(df),control = loess.control(surface="direct"), span = 1)
+      }
+    }, error=function(e) {
+        paste0("failed with ", nrow(na.omit(df)))
+      }
+    ))
+}
+
+try_predict <- function (x, df){
+    return(tryCatch(suppressWarnings(predict(x, df)), error=function(e) NULL))
+}

@@ -59,11 +59,13 @@ housing <- read_excel(
 ## Raw bodyweights data
 
 ```{r}
-bodyweights <- read_excel(
+bodyweights_raw <- read_excel(
     "./data/invivo/arsenic_bodyweight.xlsx",
     sheet = "bodyweight",
     .name_repair = janitor::make_clean_names
-  ) %>%
+  ) 
+
+bodyweights <- bodyweights_raw %>%
   dplyr::rename(generation = g) %>%
   mutate(
     id = factor(id),
@@ -190,29 +192,6 @@ estimated_deaths <- bodyweights %>%
 - uses lm on 1 or 2 data points, with loess on 3+
 
 ```{r}
-try_loess_lm <- function (df) {
-  return(
-    tryCatch({
-      if (nrow(na.omit(df)) == 2 | nrow(na.omit(df)) == 1){
-        lm(bodyweight ~ weeks_continuous, data = na.omit(df))
-      }else if (nrow(na.omit(df)) == 3){
-        loess(bodyweight ~ weeks_continuous, data = na.omit(df),control = loess.control(surface="direct"), span = 2)
-      }else if(nrow(na.omit(df)) > 20){
-        loess(bodyweight ~ weeks_continuous, data = na.omit(df), span = 0.25)
-      }else{
-        # default
-        loess(bodyweight ~ weeks_continuous, data = na.omit(df),control = loess.control(surface="direct"), span = 1)
-      }
-    }, error=function(e) {
-        paste0("failed with ", nrow(na.omit(df)))
-      }
-    ))
-}
-
-try_predict <- function (x, df){
-    return(tryCatch(suppressWarnings(predict(x, df)), error=function(e) NULL))
-}
-
 # generate loess/lm models
 loess_lm_models <- plyr::dlply(bodyweights, "id", function(df){
   suppressWarnings(try_loess_lm(df))
@@ -290,10 +269,116 @@ bw_fit_w_estimates <- plyr::ldply(loess_lm_models, function(mod){
   relocate(id, bodyweight, bodyweight_fit,date_order,sex, housing_id)
 ```
 
+# Annotated dataset construction
+
+- complementary / 1:many table for analysis
+- https://stackoverflow.com/questions/12851208/how-to-detect-significant-change-trend-in-a-time-series-data
+
+```{r}
+bw_annotated <- read.csv("./data/invivo/arsenic_bodyweight_annotated.csv")
+```
+
 # Saves
+
+## Bodyweight time series
 
 - currently filters 1) redundant 'end_of_study' extraction and 2) empty gathered fields.
 
 ```{r}
 write.csv(dplyr::select(filter(bw_fit_w_estimates, !is.na(date_order) & !is.na(bodyweight)), -c("color_gen", "data_source","comments","cause_of_death")), './output/bodyweight/arsenic_bodyweight_processed.csv', row.names = FALSE)
+```
+
+## Fits plot
+
+ - not knit - look for PDF
+
+```{r}
+# list no data
+na_list <- bw_fit_w_estimates %>%
+  group_by(id,housing_id,wave,generation,fdose, sex) %>% 
+  summarise_each(funs(100*mean(is.na(.)))) %>%
+  filter(bodyweight == 100) %>%
+  group_by(housing_id,sex,wave,fdose,generation) %>%
+  summarise(label_nodata = paste("no data:", id, collapse = "\n"),
+            label_group = paste(paste0("wave:",wave), housing_id, paste0("wave:",sex), paste0("wave:",fdose), collapse = "\n"))
+```
+
+```{r eval = FALSE}
+pdf("./output/bodyweight/mice_by_cage.pdf")
+# use n_pages on ggplot object on one page to estimate loop size
+#ggforce::n_pages()
+
+for (i in 1:ceiling(length(unique(bw_fit_w_estimates$housing_id))/5)){
+  print(paste0("producing  plot page #", i))
+  print(
+  ggplot(arrange(bw_fit_w_estimates, sex, wave, housing_id, fdose), 
+    aes(x = week_as_date, y = bodyweight, group = id)) +
+  geom_path(aes(color = color_gen), 
+            size = 0.5,
+            linetype = 'dotdash') +
+      geom_text(data = na_list, x=-Inf, y=Inf, aes(group = housing_id,label = label_nodata),hjust = 0, vjust = 1, size=3) +
+  scale_shape_manual(values = c(16, 1)) +   
+    # smooths on lm results
+  geom_smooth(data = filter(bw_fit_w_estimates,id %in% names(which(sapply(loess_lm_models, function(x) (class(x) == "lm")),TRUE))) %>% mutate_cond(is.na(bodyweight), bodyweight = bodyweight_fit),
+              method = 'lm',
+              aes(x = week_as_date,
+                  y = bodyweight,
+                  color = color_gen),
+              linetype = 'solid',
+              se = FALSE,
+              size=0.5) +
+    # smooths on loess results
+  geom_smooth(data = filter(bw_fit_w_estimates,id %in% names(which(sapply(loess_lm_models, function(x) (class(x) == "loess")),TRUE)))  %>% mutate_cond(is.na(bodyweight), bodyweight = bodyweight_fit),
+              method = 'loess',
+              aes(x = week_as_date,
+                  y = bodyweight,
+                  color = color_gen),
+              linetype = 'solid',
+              se = FALSE,
+              span = 1,
+              size = 0.5) +
+  geom_point(data = cause_of_death %>% mutate_cond(is.na(bodyweight), bodyweight = bodyweight_fit),
+             size = 2, show.legend = FALSE,
+             aes(x = week_as_date, 
+                 y = bodyweight,
+                 shape = data_source,
+                 color = color_gen)
+             ) +
+  ggrepel::geom_text_repel(
+    aes_q(label = ~paste(id,"\n", 
+          ifelse(is.na(cause_of_death),"",paste0(sprintf("%s",cause_of_death),"\n")),
+          ifelse(is.na(comments),"",sprintf("%s",comments))), 
+           color = as.character(cause_of_death$color_gen)),
+           fontface = "bold",
+           direction = 'both',
+           nudge_x = 25,
+           bg.color = "white",
+           bg.r = 0.2,
+           force_pull = 3,
+           segment.colour = 'black',
+           min.segment.length = unit(0, 'lines'),
+           data =  cause_of_death %>% mutate_cond(is.na(bodyweight), bodyweight = bodyweight_fit),
+           size = 2)  + 
+          geom_point(data = bw_fit_w_estimates, aes(x = week_as_date, y = bodyweight), size=0.15) +
+  ######### setting x limits, nudging to the right #########
+ggforce::facet_wrap_paginate(~ housing_id + sex + fdose + wave, 
+                               ncol = 1, 
+                               nrow = 5,
+                               page  = i,
+                               strip.position="right",
+                               scales = "free_y",
+                               labeller = labeller( wave = label_both, housing_id = label_both, fdose = label_both, sex = label_both)) + 
+  scale_x_date(date_labels = "%b-%y", date_breaks = '1 month',minor_breaks=NULL) +
+  ylab("Bodyweights (grams)") +
+  xlab("Arsenic Dose (ppm)") +
+  theme(
+    strip.text = element_text(size=8),
+    panel.border = element_rect(fill=NA, colour="grey40"),
+    axis.text.x = element_text(size = 6, angle = 45, vjust = 1.1, hjust=1),
+    axis.title.x=element_blank()
+  ) + guides(colour = FALSE, shape = guide_legend(),
+  linetype = guide_legend())
+  )
+}
+dev.off()
 ```

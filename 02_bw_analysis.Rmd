@@ -1,0 +1,117 @@
+---
+title: "Stage 2 Analysis"
+author:
+- name: Robert Sellers
+  affiliation: The Jackson Laboratory
+date: "`r paste('Last knit on:',format(Sys.time(), '%d %B %Y'))`"
+abstract: |
+latex_engine: pdflatex
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    number_sections: true
+    theme: lumen
+    toc: yes
+    toc_float: yes
+    df_print: paged
+    # code_folding: "hide"
+  pdf_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pyments
+    keep_tex: yes
+    latex_engine: xelatex
+    number_sections: no
+    toc: no
+    
+---
+
+# Environment
+
+```{r}
+options(scipen = 999) # suppress sci notation
+
+setwd('~/Desktop/projects/jax_arsenic_toxicology_analysis')
+
+suppressPackageStartupMessages(require(tidyverse))
+suppressPackageStartupMessages(require(readxl))
+suppressPackageStartupMessages(require(ggpubr))
+suppressPackageStartupMessages(require(zoo))
+
+source('scripts/custom_tools.R')
+```
+
+# Data
+
+## Annotated dataset construction
+
+- complementary / 1:many table for analysis
+- https://stackoverflow.com/questions/12851208/how-to-detect-significant-change-trend-in-a-time-series-data
+
+```{r}
+bw_annotated <- read.csv("./data/invivo/arsenic_bodyweight_annotated.csv")
+```
+
+## Estimates Data
+
+# Saves
+
+## Bodyweight time series
+
+```{r}
+bw_fit_w_estimates <- read.csv("./data/invivo/arsenic_bodyweight_processed.csv")
+```
+
+## Weight loss thresholding
+
+- currently just random sampling 
+- ThresholdingAlgo
+https://stackoverflow.com/questions/22583391/peak-signal-detection-in-realtime-timeseries-data/54507329#54507329
+
+```{r}
+dev.off()
+id_ <- sample(bw_fit_w_estimates$id,1)
+
+sampl_ <- subset(bw_fit_w_estimates, id == id_) %>%    drop_na(bodyweight) %>%
+  drop_na(date_order) %>%
+  group_by(id) %>%
+  arrange(date_order)
+
+y <- sampl_$bodyweight_fit
+
+# set.seed(5)
+if (length(y) < 12){
+  #insufficient data
+  plot(c(0, 1), c(0, 1), ann = F, bty = 'n', type = 'n', xaxt = 'n', yaxt = 'n'
+       )
+  text(x = 0.5, y = 0.5, paste0(unique(sampl_$housing_id),", ",id_,": insufficient data, n=", length(y)), 
+     cex = 1, col = "black")
+
+}else{
+  lag       <- 2
+  threshold <- 2 
+  influence <- 1
+
+result <- ThresholdingAlgo(y,lag,threshold,influence) 
+
+if(any(result$signals[which.max(y):length(result$signals)] == -1)){
+  flag <- "weight loss detected"
+}else{
+  flag <- "no weight loss"
+}
+
+any(result$signals[which.max(y):length(result$signals)] == -1)
+# Plot result
+par(mfrow = c(2,1),oma = c(2,2,0,0),mar = c(0,0,2,1))
+plot(1:length(y),y,type="l",lwd=2,ylab="",xlab="", ylim=c(min(sampl_$bodyweight_fit)-1,max(sampl_$bodyweight_fit)+1), main = paste0(id_,", ",unique(sampl_$housing_id),", ", unique(sampl_$fdose)," ppm"), xaxt='n')
+# avg_filter
+lines(1:length(y),result$avgFilter,type="l",col="cyan",lwd=2,lty="longdash")
+lines(1:length(y),result$avgFilter+threshold*result$stdFilter,type="l",col="green",lwd=1,lty="longdash")
+lines(1:length(y),result$avgFilter-threshold*result$stdFilter,type="l",col="green",lwd=1,lty="longdash")
+abline(h = sampl_$bodyweight_fit[which.max(y)], col="blue")
+abline(v = which.max(y), col="blue")
+
+plot(result$signals,type="S",col="red",ylab="",xlab="",ylim=c(-1.5,1.5),lwd=2, main = flag)
+}
+```
