@@ -53,15 +53,14 @@ source('scripts/custom_tools.R')
 bw_annotated <- read.csv("./data/invivo/arsenic_bodyweight_annotated.csv")
 ```
 
-## Estimates Data
-
-# Saves
 
 ## Bodyweight time series
 
 ```{r}
 bw_fit_w_estimates <- read.csv("./data/invivo/arsenic_bodyweight_processed.csv")
 ```
+
+# Analyses
 
 ## Weight loss thresholding
 
@@ -70,7 +69,6 @@ bw_fit_w_estimates <- read.csv("./data/invivo/arsenic_bodyweight_processed.csv")
 https://stackoverflow.com/questions/22583391/peak-signal-detection-in-realtime-timeseries-data/54507329#54507329
 
 ```{r}
-dev.off()
 id_ <- sample(bw_fit_w_estimates$id,1)
 
 sampl_ <- subset(bw_fit_w_estimates, id == id_) %>%    drop_na(bodyweight) %>%
